@@ -1,3 +1,6 @@
-[submodule "src/payloads/linux/ps4-kexec"]
-	path = src/payloads/linux/ps4-kexec
+[submodule "linux/ps4-kexec-672"]
+	path = linux/ps4-kexec-672
+	url = https://github.com/sleirsgoevy/ps4-kexec
+[submodule "linux/ps4-kexec-702"]
+	path = linux/ps4-kexec-702
 	url = https://github.com/sleirsgoevy/ps4-kexec

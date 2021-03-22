@@ -19,7 +19,11 @@
 #define kernel_map_offset 0x21c8ee0
 #endif
 
-asm("ps4kexec:\n.incbin \"ps4-kexec/kexec.bin\"\nps4kexec_end:\n");
+#ifdef __7_02__
+asm("ps4kexec:\n.incbin \"ps4-kexec-702/kexec.bin\"\nps4kexec_end:\n");
+#else
+asm("ps4kexec:\n.incbin \"ps4-kexec-672/kexec.bin\"\nps4kexec_end:\n");
+#endif
 
 extern char ps4kexec[];
 extern char ps4kexec_end[];
