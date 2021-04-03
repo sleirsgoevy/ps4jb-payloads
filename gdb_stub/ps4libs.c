@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <ps4-offsets/kernel.h>
 
 typedef unsigned char pkt_opaque[1];
 
@@ -78,19 +79,6 @@ unsigned long long kcall(void* fn, ...)
     return args[0];
 }
 
-#ifndef __7_02__
-#define kernel_offset_xfast_syscall 0x1c0
-#define kernel_offset_allproc 0x22bbe80
-#define kernel_offset_vmspace_acquire_ref 0x44cb90
-#define kernel_offset_vmspace_free 0x44c9c0
-#define kernel_offset_printf 0x123280
-#else
-#define kernel_offset_xfast_syscall 0x1c0
-#define kernel_offset_allproc 0x1b48318
-#define kernel_offset_vmspace_acquire_ref 0x25f9f0
-#define kernel_offset_vmspace_free 0x25f820
-#define kernel_offset_printf 0xbc730
-#endif
 #define kprintf(...) //kcall((void*)(kcall(k_xfast_syscall) - kernel_offset_xfast_syscall + kernel_offset_printf), __VA_ARGS__)
 
 off_t kstrncpy(char* dst, unsigned long long src, size_t sz)
