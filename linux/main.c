@@ -6,23 +6,16 @@
 #include <signal.h>
 #include <sys/thr.h>
 #include <time.h>
+#include <ps4-offsets/kernel.h>
 
-#ifndef __7_02__
-#define syscall_offset 0x1c0
-#define printf_offset 0x123280
-#define kmem_alloc_offset 0x250730
-#define kernel_map_offset 0x220dfc0
+#ifdef __7_55__
+asm("ps4kexec:\n.incbin \"ps4-kexec-755/kexec.bin\"\nps4kexec_end:\n");
 #else
-#define syscall_offset 0x1c0
-#define printf_offset 0xbc730
-#define kmem_alloc_offset 0x1170f0
-#define kernel_map_offset 0x21c8ee0
-#endif
-
 #ifdef __7_02__
 asm("ps4kexec:\n.incbin \"ps4-kexec-702/kexec.bin\"\nps4kexec_end:\n");
 #else
 asm("ps4kexec:\n.incbin \"ps4-kexec-672/kexec.bin\"\nps4kexec_end:\n");
+#endif
 #endif
 
 extern char ps4kexec[];
@@ -40,10 +33,10 @@ unsigned long long get_syscall(void)
 
 void kernel_main()
 {
-    unsigned long long kernel_base = get_syscall() - syscall_offset;
-    unsigned long long early_printf = kernel_base + printf_offset;
-    unsigned long long kmem_alloc = kernel_base + kmem_alloc_offset;
-    unsigned long long kernel_map = kernel_base + kernel_map_offset;
+    unsigned long long kernel_base = get_syscall() - kernel_offset_xfast_syscall;
+    unsigned long long early_printf = kernel_base + kernel_offset_printf;
+    unsigned long long kmem_alloc = kernel_base + kernel_offset_kmem_alloc;
+    unsigned long long kernel_map = kernel_base + kernel_offset_kernel_map;
     char* new_ps4_kexec = ((char*(*)(unsigned long long, unsigned long long))kmem_alloc)(*(unsigned long long*)kernel_map, ps4kexec_end-ps4kexec);
     for(int i = 0; ps4kexec + i != ps4kexec_end; i++)
         new_ps4_kexec[i] = ps4kexec[i];
