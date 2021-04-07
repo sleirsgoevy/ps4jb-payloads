@@ -6,3 +6,5 @@
 #define kernel_offset_printf 0xbc730
 #define kernel_offset_kmem_alloc 0x1170f0
 #define kernel_offset_kernel_map 0x21c8ee0
+#define kernel_offset_sysent 0x111e000
+#define kernel_offset_proc_rwmem 0x10ee10
