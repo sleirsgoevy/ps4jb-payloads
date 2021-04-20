@@ -126,7 +126,7 @@ int my_atoi(const char *s)
 #endif
 
 #ifndef VRAM_GB_MAX
-#define VRAM_GB_MAX 3
+#define VRAM_GB_MAX 5
 #endif
 
 #ifndef HDD_BOOT_PATH
