@@ -4,9 +4,11 @@ extern int errno;
 #define errno not_errno
 #define pthread_t not_pthread_t
 #include <sys/thr.h>
+#include <machine/sysarch.h>
 #else
 #define _GNU_SOURCE
 #include <pthread.h>
+#include <asm/prctl.h>
 #endif
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -402,8 +404,6 @@ static int write_mem(const unsigned char* buf, unsigned long long addr, int sz)
     return 0;
 }
 
-static int was_last_step;
-
 void serve_string(pkt_opaque o, char* s, unsigned long long l, int has_annex)
 {
     unsigned long long annex, start, len;
@@ -632,7 +632,6 @@ static void main_loop(struct trap_state* ts)
         }
         case CMD_S: // singlestep
             ts->regs.eflags |= 256;
-            was_last_step = 1;
         case CMD_C: // continue
             skip_to_end(o);
             start_packet(o);
@@ -753,13 +752,13 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
     ucontext_t* uc = (ucontext_t*)o_uc;
 #ifdef __PS4__
     mcontext_t* mc = (mcontext_t*)(((char*)&uc->uc_mcontext)+48); // wtf??
-    if(signum == SIGTRAP && !was_last_step)
+    sysarch(AMD64_SET_GSBASE, &mc->mc_gsbase);
+    if(signum == SIGTRAP && idc->si_code == TRAP_BRKPT)
         mc->mc_rip--;
 #else
-    if(signum == SIGTRAP && !was_last_step)
+    if(signum == SIGTRAP && idc->si_code == 3)
         uc->uc_mcontext.gregs[REG_RIP]--;
 #endif
-    was_last_step = 0;
     struct trap_state ts = {
         .trap_signal = signum,
         .regs = {
@@ -781,7 +780,7 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
             .r14 = mc->mc_r14,
             .r15 = mc->mc_r15,
             .rip = mc->mc_rip,
-            .eflags = mc->mc_rflags & ~256 /* singlestep */,
+            .eflags = mc->mc_rflags & ~256ull /* singlestep */,
             .cs = mc->mc_cs,
             .ds = mc->mc_ds,
             .es = mc->mc_es,
@@ -883,7 +882,12 @@ static void tmp_sigsegv(int sig, siginfo_t* idc, void* o_uc)
     signal_handler(0, idc, o_uc);
 }
 
-void dbg_enter(void)
+__attribute__((naked)) void dbg_enter()
+{
+    asm volatile("mov %rsp, %rdi\njmp real_dbg_enter");
+}
+
+void real_dbg_enter(uint64_t* rsp)
 {
 #ifdef __PS4__
 #ifdef BLOB
@@ -938,8 +942,6 @@ void dbg_enter(void)
     sigaction(SIGSEGV, &siga, NULL);
     pkt_opaque o;
     // set debugger entry
-    unsigned long long* rbp;
-    asm("mov %%rbp, %0":"=r"(rbp));
-    start_rip = rbp[1];
-    rbp[1] = 0;
+    start_rip = *rsp;
+    *rsp = 0;
 }

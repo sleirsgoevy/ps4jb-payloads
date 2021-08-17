@@ -1,10 +1,10 @@
 all: lib.a
 
 clean:
-	rm lib.a *.o syscalls.asm
+	rm -f lib.a *.o syscalls.asm
 
 dl.o: dl.c
-	gcc -c -isystem ../freebsd-headers -nostdinc -fno-stack-protector dl.c -o dl.o
+	gcc -c -isystem ../freebsd-headers -nostdinc -fno-stack-protector dl.c -o dl.o -fPIE -ffreestanding
 
 crt.o: crt.asm
 	yasm -f elf64 crt.asm

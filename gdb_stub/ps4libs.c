@@ -114,6 +114,7 @@ int get_elf_offsets(const char* name, unsigned long long* addrs)
     int fd = open(path, O_RDONLY);
     if(fd < 0) // sandboxed
     {
+        kprintf("opening %s failed\n", path);
         char sandbox_path[11];
         size_t sz = 11;
         if(randomized_path(0, sandbox_path, &sz))
@@ -127,7 +128,30 @@ int get_elf_offsets(const char* name, unsigned long long* addrs)
             path[i + sizeof("/0123456789/common/lib/") - 1] = name[i];
         fd = open(path, O_RDONLY);
         if(fd < 0)
-            return -1;
+        {
+            kprintf("opening %s failed\n", path);
+            char path_app0[o + sizeof("/app0/sce_module/")];
+            for(size_t i = 0; i < sizeof("/app0/"); i++)
+                path_app0[i] = "/app0/"[i];
+            for(size_t i = 0; i <= o; i++)
+                path_app0[i + sizeof("/app0/") - 1] = name[i];
+            fd = open(path_app0, O_RDONLY);
+            if(fd < 0)
+            {
+                kprintf("opening %s failed\n", path_app0);
+                for(size_t i = 0; i < sizeof("/app0/sce_module/"); i++)
+                    path_app0[i] = "/app0/sce_module/"[i];
+                for(size_t i = 0; i <= o; i++)
+                    path_app0[i + sizeof("/app0/sce_module/") - 1] = name[i];
+                fd = open(path_app0, O_RDONLY);
+                if(fd < 0)
+                {
+                    kprintf("opening %s failed\n", path_app0);
+                    kprintf("failed to find prx of %s\n", name);
+                    return -1;
+                }
+            }
+        }
     }
     unsigned long long shit[4];
     if(read(fd, shit, sizeof(shit)) != sizeof(shit))
@@ -219,7 +243,7 @@ void list_libs(pkt_opaque o)
         off_t of = kstrncpy(data2p, i+141, 4096);
         data2p[of] = 0;
         kprintf("#0x%llx 0x%llx %s\n", start, end, data2p);
-        if(data2p[0] == 'l' && data2p[1] == 'i' && data2p[2] == 'b' && !strcmp(data2p + of - 5, ".sprx"))
+        if(!strcmp(data2p, "eboot.bin") || (data2p[0] == 'l' && data2p[1] == 'i' && data2p[2] == 'b' && (!strcmp(data2p + of - 4, ".prx") || !strcmp(data2p + of - 5, ".sprx"))))
         {
             if(strcmp(data2p, data1p))
             {

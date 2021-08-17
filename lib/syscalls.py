@@ -15,9 +15,10 @@ def get_freebsd_syscalls():
     return ans
 
 def get_sony_syscalls():
-    cli = http.client.HTTPSConnection('www.psdevwiki.com')
-    cli.request('GET', '/ps4/edit/Syscalls')
-    r = cli.getresponse()
+    #cli = http.client.HTTPSConnection('www.psdevwiki.com')
+    #cli.request('GET', '/ps4/edit/Syscalls')
+    #r = cli.getresponse()
+    r = urllib.request.urlopen('http://web.archive.org/web/20210124215126js_/https://psdevwiki.com/ps4/edit/Syscalls')
     data = html.unescape(r.read().decode('latin-1').split('<textarea ', 1)[1].split('</textarea>', 1)[0])
     ans = {}
     for i in data.split('\n'):
