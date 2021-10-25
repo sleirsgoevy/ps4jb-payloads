@@ -1,5 +1,8 @@
 #include <stddef.h>
 #include <sys/mman.h>
+#include "ps4-libjbc/jailbreak.h"
+
+int do_download_pkg(const char* tgt_path);
 
 enum bgft_task_option_t {
 	BGFT_TASK_OPTION_NONE = 0x0,
@@ -60,29 +63,58 @@ struct bgft_init_params {
 void* dlopen(const char*, int);
 void* dlsym(void*, const char*);
 
+#define PATH "/user/home/app.pkg"
+
+asm("clear_stack:\nmov $0x800,%ecx\nmovabs $0xdead000000000000,%rax\n.L1:\npush %rax\nloop .L1\nadd $0x4000,%rsp\nret");
+void clear_stack(void);
+
 int main()
 {
+    struct jbc_cred cred;
+    jbc_get_cred(&cred);
+    jbc_jailbreak_cred(&cred);
+    cred.jdir = 0;
+    cred.sceProcType = 0x3800000000000010;
+    cred.sonyCred = 0x40001c0000000000;
+    cred.sceProcCap = 0x900000000000ff00;
+    jbc_set_cred(&cred);
+    if(do_download_pkg(PATH))
+        *(void* volatile*)0;
     int rv;
+    clear_stack();
     void* bgft = dlopen("/system/common/lib/libSceBgft.sprx", 0);
     int(*sceBgftInitialize)(struct bgft_init_params*) = dlsym(bgft, "sceBgftServiceIntInit");
-    int(*sceBgftDownloadRegisterTaskByStorage)(struct bgft_download_param*, int*) = dlsym(bgft, "sceBgftServiceIntDownloadRegisterTaskByStorage");
+    int(*sceBgftDownloadRegisterTaskByStorageEx)(struct bgft_download_param_ex*, int*) = dlsym(bgft, "sceBgftServiceIntDownloadRegisterTaskByStorageEx");
     int(*sceBgftDownloadStartTask)(int) = dlsym(bgft, "sceBgftServiceIntDownloadStartTask");
+    void* aiu = dlopen("/system/common/lib/libSceAppInstUtil.sprx", 0);
+    int(*sceAppInstUtilInitialize)(void) = dlsym(aiu, "sceAppInstUtilInitialize");
+    int(*sceAppInstUtilGetTitleIdFromPkg)(const char*, char*, int*) = dlsym(aiu, "sceAppInstUtilGetTitleIdFromPkg");
+    int(*sceAppInstUtilAppUnInstall)(const char*) = dlsym(aiu, "sceAppInstUtilAppUnInstall");
+    rv = sceAppInstUtilInitialize();
+    char titleid[16];
+    //credit: LightningMods
+    int is_app = 0;
+    sceAppInstUtilGetTitleIdFromPkg(PATH, titleid, &is_app);
     struct bgft_init_params ip = {
         .mem = mmap(NULL, 0x100000, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0),
         .size = 0x100000,
     };
     rv = sceBgftInitialize(&ip);
-    struct bgft_download_param params = {
-        .entitlement_type = 5,
-        .id = "",
-        .content_url = "/user/home/app.pkg",
-        .content_name = "app.pkg",
-        .icon_path = "",
-        .playgo_scenario_id = "0",
-        .option = BGFT_TASK_OPTION_DISABLE_CDN_QUERY_PARAM,
+    struct bgft_download_param_ex params = {
+        .param = {
+            .entitlement_type = 5,
+            .id = "",
+            .content_url = "/user/home/app.pkg",
+            .content_name = "app.pkg",
+            .icon_path = "",
+            .playgo_scenario_id = "0",
+            .option = BGFT_TASK_OPTION_DISABLE_CDN_QUERY_PARAM | BGFT_TASK_OPTION_FORCE_UPDATE | BGFT_TASK_OPTION_DELETE_AFTER_UPLOAD,
+        },
+        .slot = 0,
     };
     int task = BGFT_INVALID_TASK_ID;
-    rv = sceBgftDownloadRegisterTaskByStorage(&params, &task);
+    while((rv = sceBgftDownloadRegisterTaskByStorageEx(&params, &task)) == 0x80990088)
+        rv = sceAppInstUtilAppUnInstall(titleid);
     rv = sceBgftDownloadStartTask(task);
     return 0;
 }
