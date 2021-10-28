@@ -7,3 +7,6 @@
 [submodule "linux/ps4-kexec-755"]
 	path = linux/ps4-kexec-755
 	url = https://github.com/sleirsgoevy/ps4-kexec
+[submodule "bgft/ps4-libjbc"]
+	path = bgft/ps4-libjbc
+	url = https://github.com/sleirsgoevy/ps4-libjbc
