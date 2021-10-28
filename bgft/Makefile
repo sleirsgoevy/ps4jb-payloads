@@ -14,7 +14,7 @@ payload.bin: payload.elf
 	file payload.bin | fgrep -q 'payload.bin: DOS executable (COM)'
 
 sender: sender.c payload.bin
-	gcc sender.c -o sender
+	gcc -D_FILE_OFFSET_BITS=64 sender.c -o sender
 
 sender.exe: sender.c payload.bin
-	i686-w64-mingw32-gcc sender.c -o sender.exe -lws2_32
+	i686-w64-mingw32-gcc -D_FILE_OFFSET_BITS=64 sender.c -o sender.exe -lws2_32

@@ -168,9 +168,9 @@ retry_connect:;
 #endif
     argument->addr = connect_addr.sin_addr.s_addr;
     argument->port = bind_addr.sin_port;
-    if(fseek(pkg, 0, SEEK_END))
+    if(fseeko(pkg, 0, SEEK_END))
         fail(fclose(pkg); closesocket(accept_sock); closesocket(connect_sock), "File is not seekable");
-    off_t file_size = argument->pkg_size = ftell(pkg);
+    off_t file_size = argument->pkg_size = ftello(pkg);
     if(file_size == (off_t)-1)
         fail(fclose(pkg); closesocket(accept_sock); closesocket(connect_sock), "Could not determine file size");
     fseek(pkg, 0, SEEK_SET);
