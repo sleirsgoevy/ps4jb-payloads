@@ -731,14 +731,23 @@ long pthread_self()
 
 void* interrupter_thread(void* o)
 {
-    pthread_t parent = (pthread_t)o;
+#ifdef __PS4__
+    sigset_t ss = {0};
+	ss.__bits[_SIG_WORD(SIGINT)] |= _SIG_BIT(SIGINT);
+    sigprocmask(SIG_BLOCK, &ss, NULL);
+#else
+    sigset_t ss;
+    sigemptyset(&ss);
+    sigaddset(&ss, SIGINT);
+    pthread_sigmask(SIG_BLOCK, &ss, NULL);
+#endif
     fd_set a, b;
     FD_ZERO(&a);
     FD_ZERO(&b);
     FD_SET(gdb_socket, &a);
     while(select(gdb_socket+1, &a, &b, &b, NULL) <= 0);
     if(!in_signal_handler)
-        pthread_kill(parent, SIGINT);
+        kill(getpid(), SIGINT);
 #ifdef __PS4__
     thr_exit(0);
 #endif
@@ -858,7 +867,7 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
     __atomic_exchange_n(&in_signal_handler, 0, __ATOMIC_RELEASE);
 #ifdef INTERRUPTER_THREAD
     pthread_t child;
-    pthread_create(&child, NULL, interrupter_thread, (void*)pthread_self());
+    pthread_create(&child, NULL, interrupter_thread, NULL);
     pthread_detach(child);
 #endif
 }

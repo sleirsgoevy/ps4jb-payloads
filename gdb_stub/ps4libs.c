@@ -1,8 +1,10 @@
 #include <sys/types.h>
-#include <stdarg.h>
+#include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <ps4-offsets/kernel.h>
+
+#undef errno
+extern int errno;
 
 typedef unsigned char pkt_opaque[1];
 
@@ -17,91 +19,9 @@ void serve_genfn_start(pkt_opaque, srv_opaque, int);
 int serve_genfn_emit(pkt_opaque, srv_opaque, const char*, unsigned long long);
 void serve_genfn_end(pkt_opaque, srv_opaque);
 
-asm("kexec:\nmov $11, %rax\nmov %rcx, %r10\nsyscall\nret");
-void kexec(void*, void*);
-
-unsigned long long k_xfast_syscall()
-{
-    unsigned int a, c = 0xc0000082;
-    unsigned long long d;
-    asm volatile("rdmsr":"=a"(a),"=d"(d):"c"(c));
-    return d << 32 | a;
-}
-
-unsigned long long k_read64(unsigned long long ptr)
-{
-    return *(volatile unsigned long long*)ptr;
-}
-
-unsigned long long k_read8(unsigned long long ptr)
-{
-    return *(volatile unsigned char*)ptr;
-}
-
-int read_mem(void*, unsigned long long, int);
-
-unsigned long long u_read64(unsigned long long ptr)
-{
-    unsigned long long ans = 0;
-    read_mem(&ans, ptr, 8);
-    return ans;
-}
-
-unsigned long long u_read8(unsigned long long ptr)
-{
-    unsigned char ans = 0;
-    read_mem(&ans, ptr, 1);
-    return ans;
-}
-
-asm("k_curthread:\nmov %gs:0, %rax\nret");
-extern char k_curthread[];
-
-void k_call(void* td, unsigned long long** uap)
-{
-    uap[1][0] = ((unsigned long long(*)(unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long))uap[1][0])(uap[1][1], uap[1][2], uap[1][3], uap[1][4], uap[1][5], uap[1][6]);
-}
-
-unsigned long long kcall(void* fn, ...)
-{
-    va_list v;
-    va_start(v, fn);
-    unsigned long long args[7];
-    args[0] = (unsigned long long)fn;
-    args[1] = va_arg(v, unsigned long long);
-    args[2] = va_arg(v, unsigned long long);
-    args[3] = va_arg(v, unsigned long long);
-    args[4] = va_arg(v, unsigned long long);
-    args[5] = va_arg(v, unsigned long long);
-    args[6] = va_arg(v, unsigned long long);
-    va_end(v);
-    kexec(k_call, args);
-    return args[0];
-}
-
-#define kprintf(...) //kcall((void*)(kcall(k_xfast_syscall) - kernel_offset_xfast_syscall + kernel_offset_printf), __VA_ARGS__)
-
-off_t kstrncpy(char* dst, unsigned long long src, size_t sz)
-{
-    off_t i = 0;
-    while(i < sz && (dst[i] = u_read8(src + i)))
-        i++;
-    return i;
-}
-
-int strcmp(const char* a, const char* b)
-{
-    while(*a && *a == *b)
-    {
-        a++;
-        b++;
-    }
-    return *a - *b;
-}
-
 int randomized_path(unsigned long long, char*, size_t*);
 
-int get_elf_offsets(const char* name, unsigned long long* addrs)
+static int get_elf_offsets(const char* name, unsigned long long* addrs)
 {
     size_t o = 0;
     while(name[o])
@@ -114,7 +34,6 @@ int get_elf_offsets(const char* name, unsigned long long* addrs)
     int fd = open(path, O_RDONLY);
     if(fd < 0) // sandboxed
     {
-        kprintf("opening %s failed\n", path);
         char sandbox_path[11];
         size_t sz = 11;
         if(randomized_path(0, sandbox_path, &sz))
@@ -129,7 +48,6 @@ int get_elf_offsets(const char* name, unsigned long long* addrs)
         fd = open(path, O_RDONLY);
         if(fd < 0)
         {
-            kprintf("opening %s failed\n", path);
             char path_app0[o + sizeof("/app0/sce_module/")];
             for(size_t i = 0; i < sizeof("/app0/"); i++)
                 path_app0[i] = "/app0/"[i];
@@ -138,18 +56,13 @@ int get_elf_offsets(const char* name, unsigned long long* addrs)
             fd = open(path_app0, O_RDONLY);
             if(fd < 0)
             {
-                kprintf("opening %s failed\n", path_app0);
                 for(size_t i = 0; i < sizeof("/app0/sce_module/"); i++)
                     path_app0[i] = "/app0/sce_module/"[i];
                 for(size_t i = 0; i <= o; i++)
                     path_app0[i + sizeof("/app0/sce_module/") - 1] = name[i];
                 fd = open(path_app0, O_RDONLY);
                 if(fd < 0)
-                {
-                    kprintf("opening %s failed\n", path_app0);
-                    kprintf("failed to find prx of %s\n", name);
                     return -1;
-                }
             }
         }
     }
@@ -169,7 +82,7 @@ int get_elf_offsets(const char* name, unsigned long long* addrs)
     }
     off_t phdr_offset = o2 + ehdr[4];
     int nphdr = ehdr[7] & 0xffff;
-    unsigned long long lowest_addr = -1;
+    unsigned long long eh_frame = -1;
     unsigned long long dynamic = -1;
     lseek(fd, phdr_offset, SEEK_SET);
     for(int i = 0; i < nphdr; i++)
@@ -182,21 +95,20 @@ int get_elf_offsets(const char* name, unsigned long long* addrs)
         }
         unsigned long long addr = phdr[2];
         int ptype = phdr[0] & 0xffffffff;
-        if(ptype == 1)
-        {
-            if(addr < lowest_addr)
-                lowest_addr = addr;
-        }
-        else if(ptype == 2)
+        if(ptype == 2)
             dynamic = addr;
+        else if(ptype == 0x6474e550)
+            eh_frame = addr;
     }
     close(fd);
-    addrs[0] = lowest_addr;
+    if(dynamic == -1 || eh_frame == -1)
+        return -1;
+    addrs[0] = eh_frame;
     addrs[1] = dynamic;
     return 0;
 }
 
-int handle_lib(pkt_opaque o, srv_opaque p, const char* name, unsigned long long text_base)
+static int handle_lib(pkt_opaque o, srv_opaque p, const char* name, unsigned long long eh_frame)
 {
     size_t l = 0;
     while(name[l])
@@ -204,7 +116,7 @@ int handle_lib(pkt_opaque o, srv_opaque p, const char* name, unsigned long long 
     unsigned long long ptrs[2];
     if(get_elf_offsets(name, ptrs))
         return -1;
-    unsigned long long base = text_base - ptrs[0];
+    unsigned long long base = eh_frame - ptrs[0];
     unsigned long long dyn = base + ptrs[1];
     serve_genfn_emit(o, p, "<library name=\"", 15);
     serve_genfn_emit(o, p, name, l);
@@ -218,58 +130,77 @@ int handle_lib(pkt_opaque o, srv_opaque p, const char* name, unsigned long long 
     return 0;
 }
 
+int dynlib_get_list(uint32_t* handles, size_t num, size_t* actual_num);
+
+struct module_segment
+{
+    uint64_t addr;
+    uint32_t size;
+    uint32_t flags;
+};
+
+struct module_info_ex
+{
+    size_t st_size;
+    char name[256];
+    int id;
+    uint32_t tls_index;
+    uint64_t tls_init_addr;
+    uint32_t tls_init_size;
+    uint32_t tls_size;
+    uint32_t tls_offset;
+    uint32_t tls_align;
+    uint64_t init_proc_addr;
+    uint64_t fini_proc_addr;
+    uint64_t reserved1;
+    uint64_t reserved2;
+    uint64_t eh_frame_hdr_addr;
+    uint64_t eh_frame_addr;
+    uint32_t eh_frame_hdr_size;
+    uint32_t eh_frame_size;
+    struct module_segment segments[4];
+    uint32_t segment_count;
+    uint32_t ref_count;
+};
+
+int dynlib_get_info_ex(uint32_t handle, int unknown, struct module_info_ex* info);
+
+int try_list_libs(pkt_opaque o, srv_opaque p, size_t sz)
+{
+    uint32_t handles[sz];
+    size_t nlibs = sz;
+    if(dynlib_get_list(handles, sz, &nlibs))
+    {
+        if(errno == ENOMEM)
+            return 1;
+        return -1;
+    }
+    for(size_t i = 0; i < nlibs; i++)
+    {
+        struct module_info_ex ex;
+        ex.st_size = sizeof(ex);
+        if(dynlib_get_info_ex(handles[i], 0, &ex))
+            continue;
+        handle_lib(o, p, ex.name, ex.eh_frame_hdr_addr);
+    }
+    return 0;
+}
+
 void list_libs(pkt_opaque o)
 {
     srv_opaque p;
     serve_genfn_start(o, p, 1);
     serve_genfn_emit(o, p, "<library-list-svr4 version=\"1.0\">", 33);
-    unsigned long long proc = u_read64(kcall(k_curthread) + 8);
-    unsigned long long vmspace = kcall((void*)(kcall(k_xfast_syscall) - kernel_offset_xfast_syscall + kernel_offset_vmspace_acquire_ref), proc);
-    unsigned long long vm_entry = u_read64(vmspace);
-    unsigned long long i = vm_entry;
-    char data1[4097];
-    char data2[4097];
-    char* data1p = data1;
-    char* data2p = data2;
-    data1p[0] = 0;
-    off_t prev1, prev2;
-    while(i)
-    {
-        unsigned long long j = u_read64(i);
-        if(j == vm_entry || !j)
-            break;
-        off_t start = u_read64(i+32);
-        off_t end = u_read64(i+40);
-        off_t of = kstrncpy(data2p, i+141, 4096);
-        data2p[of] = 0;
-        kprintf("#0x%llx 0x%llx %s\n", start, end, data2p);
-        if(!strcmp(data2p, "eboot.bin") || (data2p[0] == 'l' && data2p[1] == 'i' && data2p[2] == 'b' && (!strcmp(data2p + of - 4, ".prx") || !strcmp(data2p + of - 5, ".sprx"))))
-        {
-            if(strcmp(data2p, data1p))
-            {
-                if(data1p[0])
-                {
-                    kprintf("0x%llx 0x%llx %s\n", prev1, prev2, data1p);
-                    handle_lib(o, p, data1p, prev1);
-                }
-                char* tmp = data1p;
-                data1p = data2p;
-                data2p = tmp;
-            }
-            prev1 = start;
-            prev2 = end;
-        }
-        i = j;
-    }
-    if(data1p[0])
-    {
-        kprintf("0x%llx 0x%llx %s\n", prev1, prev2, data1p);
-        handle_lib(o, p, data1p, prev1);
-    }
+    size_t nlibs = 1;
+    int ret;
+    while((ret = try_list_libs(o, p, nlibs)) == 1)
+        nlibs *= 2;
     serve_genfn_emit(o, p, "</library-list-svr4>", 20);
-    kcall((void*)(kcall(k_xfast_syscall) - kernel_offset_xfast_syscall + kernel_offset_vmspace_free), vmspace);
     serve_genfn_end(o, p);
 }
+
+void kexec(void*, void*);
+asm("kexec:\nmov $11,%rax\nmov %rcx, %r10\nsyscall\nret");
 
 static void k_set_budget(int** td, int** uap)
 {
