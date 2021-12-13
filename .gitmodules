@@ -10,3 +10,6 @@
 [submodule "bgft/ps4-libjbc"]
 	path = bgft/ps4-libjbc
 	url = https://github.com/sleirsgoevy/ps4-libjbc
+[submodule "jbc_loader/ps4-libjbc"]
+	path = jbc_loader/ps4-libjbc
+	url = https://github.com/sleirsgoevy/ps4-libjbc
