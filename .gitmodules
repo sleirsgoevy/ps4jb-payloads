@@ -13,3 +13,6 @@
 [submodule "jbc_loader/ps4-libjbc"]
 	path = jbc_loader/ps4-libjbc
 	url = https://github.com/sleirsgoevy/ps4-libjbc
+[submodule "linux/ps4-kexec-900"]
+	path = linux/ps4-kexec-900
+	url = git@github.com:codedwrench/ps4-kexec.git
