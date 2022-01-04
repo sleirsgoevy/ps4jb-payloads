@@ -195,7 +195,7 @@ def efh_fetch_enc(data, off, how):
     elif how == 10: return int.from_bytes(data[off:off+2], 'little', signed=True), off+2
     elif how == 11: return int.from_bytes(data[off:off+4], 'little', signed=True), off+4
     elif how == 12: return int.from_bytes(data[off:off+8], 'little', signed=True), off+8
-    elif how == 15: return None
+    elif how == 15: return None, off
     else: assert False
 
 def efh_read_enc(data, off, off0, shift, how):
@@ -216,8 +216,8 @@ def efh_parse(data, off, limit, shift):
     te = data[off+3]
     efp, off = efh_read_enc(data, off+4, off0, shift, efpe)
     fdc, off = efh_read_enc(data, off, off0, shift, fdce)
-    max_addr = 0
-    for i in range(fdc):
+    max_addr = -1
+    for i in range(fdc if fdc is not None else 0):
         initloc, off = efh_read_enc(data, off, off0, shift, te)
         addr, off = efh_read_enc(data, off, off0, shift, te)
         max_addr = max(max_addr, addr)
@@ -288,12 +288,14 @@ if dynamic:
 
 if eh_frame_hdr != None:
     ef_start, ef_some_entry = efh_parse(data, eh_frame_hdr[1], eh_frame_hdr[1] + eh_frame_hdr[2], eh_frame_hdr[0] - eh_frame_hdr[1])
-    ef_segment = guess_section(ef_start, inmem_segments)
-    assert all(i in range(ef_segment[0], ef_segment[0]+ef_segment[2]) for i in (ef_start, ef_some_entry))
-    ef_end = ef_parse(data, ef_some_entry + ef_segment[1] - ef_segment[0], ef_segment[1] + ef_segment[2])
-    ef_length = ef_end - (ef_start + ef_segment[1] - ef_segment[0])
+    if ef_some_entry >= 0:
+        ef_segment = guess_section(ef_start, inmem_segments)
+        assert all(i in range(ef_segment[0], ef_segment[0]+ef_segment[2]) for i in (ef_start, ef_some_entry))
+        ef_end = ef_parse(data, ef_some_entry + ef_segment[1] - ef_segment[0], ef_segment[1] + ef_segment[2])
+        ef_length = ef_end - (ef_start + ef_segment[1] - ef_segment[0])
     section('.eh_frame_hdr', 1, 2, eh_frame_hdr[0], eh_frame_hdr[1], eh_frame_hdr[2], 0, 0, 0, 4)
-    section('.eh_frame', 1, 2, ef_start, ef_start + ef_segment[1] - ef_segment[0], ef_length, 0, 0, 0, 8)
+    if ef_some_entry >= 0:
+        section('.eh_frame', 1, 2, ef_start, ef_start + ef_segment[1] - ef_segment[0], ef_length, 0, 0, 0, 8)
 
 if nsections:
     shstrndx = nsections

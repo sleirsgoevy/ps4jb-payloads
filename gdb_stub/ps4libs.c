@@ -209,7 +209,19 @@ static void k_set_budget(int** td, int** uap)
     td[1][701] = tmp;
 }
 
+static void k_set_sony_cred(uint64_t** td, uint64_t** uap)
+{
+    uint64_t tmp = uap[1][0];
+    uap[1][0] = td[38][11];
+    td[38][11] = tmp;
+}
+
 void ps4_xchg_budget(int* bb)
 {
     kexec(k_set_budget, bb);
+}
+
+void ps4_xchg_sony_cred(uint64_t* cred)
+{
+    kexec(k_set_sony_cred, cred);
 }

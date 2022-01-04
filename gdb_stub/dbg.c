@@ -20,6 +20,7 @@ extern int errno;
 #include <signal.h>
 #include <errno.h>
 #include <sys/mman.h>
+#include <stdarg.h>
 #include "dbg.h"
 
 #ifdef __PS4__
@@ -107,9 +108,9 @@ static int start_packet(pkt_opaque o)
     return 0;
 }
 
-static int pkt_puts(pkt_opaque o, unsigned char* s, int l)
+static int pkt_puts(pkt_opaque o, const unsigned char* s, int l)
 {
-    unsigned char* cur = s;
+    const unsigned char* cur = s;
     int ll = l;
     while(ll)
     {
@@ -154,7 +155,7 @@ static int start_packet(pkt_opaque o)
     return 0;
 }
 
-static int pkt_puts(pkt_opaque o, unsigned char* s, int l)
+static int pkt_puts(pkt_opaque o, const unsigned char* s, int l)
 {
     size_t pkt_cap_2 = pkt_cap;
     while(pkt_len + l > pkt_cap_2)
@@ -204,6 +205,7 @@ static int end_packet(pkt_opaque o)
 static const char* commands[] = {
 // must be sorted
     "?",
+    "F",
     "G",
     "H",
     "M",
@@ -258,6 +260,7 @@ enum
     CMD_UNKNOWN = -1,
 // indexes into `commands`
     CMD_Q,
+    CMD_F,
     CMD_G_WRITE,
     CMD_H,
     CMD_M_WRITE,
@@ -335,6 +338,20 @@ static int read_hex(pkt_opaque o, unsigned long long* q)
         else
             return c;
     }
+}
+
+static int read_signed_hex(pkt_opaque o, long long* q)
+{
+    unsigned long long qq;
+    int c = read_hex(o, &qq);
+    if(qq == 0 && c == '-')
+    {
+        c = read_hex(o, &qq);
+        *q = -qq;
+    }
+    else
+        *q = qq;
+    return c;
 }
 
 struct regs
@@ -487,7 +504,7 @@ void list_libs(pkt_opaque o);
 #endif
 #endif
 
-static void main_loop(struct trap_state* ts)
+static int main_loop(struct trap_state* ts, ssize_t* result, int* ern)
 {
     pkt_opaque o;
     int stop_sig = ts->trap_signal?ts->trap_signal:SIGTRAP;
@@ -637,7 +654,7 @@ static void main_loop(struct trap_state* ts)
             start_packet(o);
             PKT_PUTS(o, "OK");
             end_packet(o);
-            return;
+            return 0;
         case CMD_Q_ATTACHED:
             skip_to_end(o);
             start_packet(o);
@@ -677,6 +694,37 @@ static void main_loop(struct trap_state* ts)
             break;
 #endif
 #endif
+        case CMD_F:
+        {
+            long long q;
+            unsigned long long ern1 = 0;
+            int eof = 0;
+            int ctrlc = 0;
+            int status = read_signed_hex(o, &q);
+            if(status == -2)
+                eof = 1;
+            if(status == ',')
+            {
+                status = read_signed_hex(o, &ern1);
+                if(status == -2)
+                    eof = 1;
+                if(status == ',')
+                {
+                    status = pkt_getchar(o);
+                    if(status == -2)
+                        eof = 1;
+                    if(status == 'C')
+                        ctrlc = 1;
+                }
+            }
+            if(!eof)
+                skip_to_end(o);
+            if(result)
+                *result = q;
+            if(ern)
+                *ern = ern1;
+            return ctrlc + 1;
+        }
         default:
             skip_to_end(o);
         case CMD_EOL:
@@ -689,7 +737,7 @@ static void main_loop(struct trap_state* ts)
 
 int in_signal_handler = 0;
 
-#ifdef INTERRUPTER_THREAD
+#if defined(INTERRUPTER_THREAD) || defined(STDIO_REDIRECT)
 
 #ifdef __PS4__
 // mock code, to make main code cleaner
@@ -701,12 +749,15 @@ void pthread_create(long* p_tid, void* _2, void* f, void* arg)
 {
     long x, y;
     static char* stack;
+    static char* stack2;
     if(!stack)
         stack = mmap(NULL, 65536, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
+    if(!stack2)
+        stack2 = mmap(NULL, 65536, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
     struct thr_param param = {
         .start_func = (void(*)(void*))f,
         .arg = arg,
-        .stack_base = stack,
+        .stack_base = arg ? stack2 : stack,
         .stack_size = 65536,
         .tls_base = NULL, // never used
         .tls_size = 0,
@@ -728,6 +779,10 @@ long pthread_self()
 #define pthread_kill thr_kill
 #define pthread_detach(...)
 #endif
+
+#endif
+
+#ifdef INTERRUPTER_THREAD
 
 void* interrupter_thread(void* o)
 {
@@ -824,7 +879,7 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
 #endif
         }
     };
-    main_loop(&ts);
+    main_loop(&ts, 0, 0);
 #ifdef __PS4__
     mc->mc_rax = ts.regs.rax;
     mc->mc_rcx = ts.regs.rcx;
@@ -871,6 +926,139 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
     pthread_detach(child);
 #endif
 }
+
+long gdb_remote_syscall(const char* name, int nargs, int* ern, ...)
+{
+    while(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE));
+    pkt_opaque o;
+    start_packet(o);
+    PKT_PUTS(o, "F");
+    size_t l = 0;
+    while(name[l])
+        l++;
+    pkt_puts(o, name, l);
+    va_list ls;
+    va_start(ls, ern);
+    for(int i = 0; i < nargs; i++)
+    {
+        uintptr_t q = va_arg(ls, uintptr_t);
+        char p[17] = ",";
+        for(int i = 15; i >= 0; i--)
+            p[16-i] = int2hex((q >> (4*i)) & 15);
+        pkt_puts(o, p, 17);
+    }
+    end_packet(o);
+    va_end(ls);
+    struct trap_state st = {0};
+    ssize_t ans;
+    int status = main_loop(&st, &ans, ern);
+    __atomic_exchange_n(&in_signal_handler, 0, __ATOMIC_RELEASE);
+    if(status == 2)
+        kill(getpid(), SIGINT);
+#ifdef INTERRUPTER_THREAD
+    pthread_t child;
+    pthread_create(&child, NULL, interrupter_thread, NULL);
+    pthread_detach(child);
+#endif
+    return ans;
+}
+
+#ifdef STDIO_REDIRECT
+
+int gdb_stdout_read, gdb_stderr_read;
+
+#ifdef PS4LIBS
+void ps4_xchg_sony_cred(uint64_t*);
+#endif
+
+static int replace_with_socket(int fd)
+{
+#ifdef PS4LIBS
+    uint64_t cred = 0x3800000000000007;
+    ps4_xchg_sony_cred(&cred);
+#endif
+    close(fd);
+#ifdef PS4LIBS
+    ps4_xchg_sony_cred(&cred);
+#endif
+    int socks[2];
+    if(socketpair(AF_UNIX, SOCK_STREAM, 0, socks))
+        return -1;
+    if(socks[0] == fd)
+        return socks[1];
+    else if(socks[1] == fd)
+        return socks[0];
+    else
+        return -1;
+}
+
+static void* stdio_redirect_thread(void* o)
+{
+#ifdef __PS4__
+    sigset_t ss = {0};
+	ss.__bits[_SIG_WORD(SIGINT)] |= _SIG_BIT(SIGINT);
+    sigprocmask(SIG_BLOCK, &ss, NULL);
+#else
+    sigset_t ss;
+    sigemptyset(&ss);
+    sigaddset(&ss, SIGINT);
+    pthread_sigmask(SIG_BLOCK, &ss, NULL);
+#endif
+    fd_set s;
+    int fds[2] = {gdb_stdout_read, gdb_stderr_read};
+    while(fds[0] >= 0 || fds[1] >= 0)
+    {
+        FD_ZERO(&s);
+        int nfds = 0;
+        if(fds[0] >= 0)
+        {
+            FD_SET(fds[0], &s);
+            if(fds[0] >= nfds)
+                nfds = fds[0] + 1;
+        }
+        if(fds[1] >= 0)
+        {
+            FD_SET(fds[1], &s);
+            if(fds[1] >= nfds)
+                nfds = fds[1] + 1;
+        }
+        int n = select(nfds, &s, NULL, NULL, NULL);
+        if(n < 0)
+            continue;
+        for(int i = 0; i < 2; i++)
+        {
+            if(FD_ISSET(fds[i], &s))
+            {
+                char chk[512];
+                ssize_t sz = read(fds[i], chk, 512);
+                if(sz <= 0)
+                    fds[i] = -1;
+                else
+                    gdb_remote_syscall("write", 3, 0, (uintptr_t)(i+1), (uintptr_t)chk, (uintptr_t)sz);
+            }
+        }
+    }
+#ifdef __PS4__
+    thr_exit(0);
+#endif
+    return NULL;
+}
+
+/*static */void gdb_setup_redir(void)
+{
+    int stubs[3];
+    for(int i = 0; i < 3; i++)
+        stubs[i] = socket(AF_UNIX, SOCK_DGRAM, 0);
+    gdb_stdout_read = replace_with_socket(1);
+    gdb_stderr_read = replace_with_socket(2);
+    for(int i = 0; i < 3; i++)
+        if(stubs[i] >= 3)
+            close(stubs[i]);
+    pthread_t thr;
+    pthread_create(&thr, NULL, stdio_redirect_thread, (void*)1);
+}
+
+#endif
 
 static unsigned long long start_rip;
 
@@ -949,7 +1137,9 @@ void real_dbg_enter(uint64_t* rsp)
     sigaction(SIGSYS, &siga, NULL);
     siga.sa_sigaction = tmp_sigsegv;
     sigaction(SIGSEGV, &siga, NULL);
-    pkt_opaque o;
+#ifdef STDIO_REDIRECT
+    gdb_setup_redir();
+#endif
     // set debugger entry
     start_rip = *rsp;
     *rsp = 0;
