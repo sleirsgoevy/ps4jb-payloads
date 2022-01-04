@@ -211,6 +211,7 @@ static const char* commands[] = {
     "M",
     "c",
     "g",
+    "k",
     "m",
     "qAttached",
 #ifdef __PS4__
@@ -266,6 +267,7 @@ enum
     CMD_M_WRITE,
     CMD_C,
     CMD_G_READ,
+    CMD_K,
     CMD_M_READ,
     CMD_Q_ATTACHED,
 #ifdef __PS4__
@@ -725,6 +727,11 @@ static int main_loop(struct trap_state* ts, ssize_t* result, int* ern)
                 *ern = ern1;
             return ctrlc + 1;
         }
+        case CMD_K:
+            skip_to_end(o);
+            start_packet(o);
+            end_packet(o);
+            kill(getpid(), SIGKILL);
         default:
             skip_to_end(o);
         case CMD_EOL:
