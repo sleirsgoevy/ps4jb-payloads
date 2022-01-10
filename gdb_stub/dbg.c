@@ -222,10 +222,8 @@ static const char* commands[] = {
     "qXfer:exec-file:read:",
 #endif
     "qXfer:features:read:target.xml:",
-#ifdef __PS4__
-#ifdef PS4LIBS
+#if defined(__PS4__) && defined(PS4LIBS)
     "qXfer:libraries-svr4:read:",
-#endif
 #endif
     "s",
 };
@@ -233,6 +231,7 @@ static const char* commands[] = {
 #ifdef __PS4__
 extern char _start[];
 
+#ifndef OBJECT_FILE
 static void reloc_commands()
 {
     unsigned long long diff = ((unsigned long long)_start) - 0x401000;
@@ -251,6 +250,7 @@ static void mprotect_rwx()
     end = ((end - 1) | (PAGE_SIZE-1)) + 1;
     mprotect((void*)start, end-start, PROT_READ|PROT_WRITE|PROT_EXEC);
 }
+#endif
 #endif
 #endif
 
@@ -278,10 +278,8 @@ enum
     CMD_QXFER_EXEC_FILE,
 #endif
     CMD_QXFER_TARGET_XML,
-#ifdef __PS4__
-#ifdef PS4LIBS
+#if defined(__PS4__) && defined(PS4LIBS)
     CMD_QXFER_LIBRARIES,
-#endif
 #endif
     CMD_S,
 };
@@ -500,10 +498,8 @@ void serve_genfn_end(pkt_opaque o, srv_opaque p)
     end_packet(o);
 }
 
-#ifdef __PS4__
-#ifdef PS4LIBS
+#if defined(__PS4__) && defined(PS4LIBS)
 void list_libs(pkt_opaque o);
-#endif
 #endif
 
 static int main_loop(struct trap_state* ts, ssize_t* result, int* ern)
@@ -535,7 +531,7 @@ static int main_loop(struct trap_state* ts, ssize_t* result, int* ern)
             start_packet(o);
             PKT_PUTS(o, "qXfer:features:read+"
 #ifdef __PS4__
-#ifndef BLOB
+#if !defined(BLOB) && !defined(OBJECT_FILE)
             ";qXfer:exec-file:read+"
 #endif
 #ifdef PS4LIBS
@@ -664,7 +660,7 @@ static int main_loop(struct trap_state* ts, ssize_t* result, int* ern)
             end_packet(o);
             break;
 #ifdef __PS4__
-#ifndef BLOB // TODO: implement (how?)
+#if !defined(BLOB) && !defined(OBJECT_FILE) // TODO: implement (how?)
         case CMD_QXFER_EXEC_FILE:
             serve_string(o, "payload.elf", 11, 1);
             break;
@@ -674,7 +670,7 @@ static int main_loop(struct trap_state* ts, ssize_t* result, int* ern)
             skip_to_end(o);
             start_packet(o);
             unsigned long long base_addr = ((unsigned long long)_start);
-#ifdef BLOB
+#if defined(BLOB) || defined(OBJECT_FILE)
             base_addr &= ~(PAGE_SIZE-1);
             char probe;
             while(!read_mem(&probe, base_addr, 1))
@@ -1097,7 +1093,9 @@ void real_dbg_enter(uint64_t* rsp)
 #ifdef BLOB
     mprotect_rwx();
 #endif
+#ifndef OBJECT_FILE
     reloc_commands();
+#endif
 #endif
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in sa = {
@@ -1107,18 +1105,14 @@ void real_dbg_enter(uint64_t* rsp)
     };
     int reuse = 1;
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, 4);
-#ifdef __PS4__
-#ifdef PS4LIBS
+#if defined(__PS4__) && defined(PS4LIBS)
     void ps4_xchg_budget(int*);
     int budget = 2;
     ps4_xchg_budget(&budget);
 #endif
-#endif
     int brv = bind(sock, (struct sockaddr*)&sa, sizeof(sa));
-#ifdef __PS4__
-#ifdef PS4LIBS
+#if defined(__PS4__) && defined(PS4LIBS)
     ps4_xchg_budget(&budget);
-#endif
 #endif
     if(brv)
         return;

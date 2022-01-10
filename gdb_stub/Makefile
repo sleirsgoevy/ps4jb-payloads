@@ -1,7 +1,7 @@
-all: payload.bin gdbstub.bin gdbstub-int.bin gdbstub-lib.bin gdbstub-lib-redir.bin
+all: payload.bin gdbstub.bin gdbstub-int.bin gdbstub-lib.bin gdbstub-lib-redir.bin gdbstub-obj.o
 
 clean:
-	rm -f payload.elf payload.bin gdbstub.elf gdbstub.bin gdbstub-int.elf gdbstub-int.bin gdbstub-lib.elf gdbstub-lib.bin gdbstub-lib-redir.elf gdbstub-lib-redir.bin
+	rm -f payload.elf payload.bin gdbstub.elf gdbstub.bin gdbstub-int.elf gdbstub-int.bin gdbstub-lib.elf gdbstub-lib.bin gdbstub-lib-redir.elf gdbstub-lib-redir.bin gdbstub-obj.o
 
 ../lib/lib.a:
 	cd ../lib; make
@@ -40,3 +40,8 @@ gdbstub-lib-redir.elf: ../lib/lib.a dbg.c ps4libs.c _end.c
 gdbstub-lib-redir.bin: gdbstub-lib-redir.elf
 	objcopy gdbstub-lib-redir.elf --only-section .text --only-section .data --only-section .bss --only-section .rodata --set-section-flags .bss=alloc,load,contents -O binary gdbstub-lib-redir.bin
 	file gdbstub-lib-redir.bin | fgrep -q 'gdbstub-lib-redir.bin: DOS executable (COM)'
+
+gdbstub-obj.o: ../lib/lib.a dbg.c ps4libs.c _end.c
+	gcc -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -fPIE -ffreestanding -static ../lib/lib.a -D__PS4__ -Ddbg_enter=main -DOBJECT_FILE -DINTERRUPTER_THREAD -DPS4LIBS -DSTDIO_REDIRECT dbg.c ps4libs.c _end.c -Wl,--entry,_start -Wl,-r -Wl,-gc-sections -o $@
+	objcopy --prefix-symbols=gdbstub_ $@
+	objcopy --redefine-sym gdbstub__start=dbg_enter --redefine-sym gdbstub__GLOBAL_OFFSET_TABLE_=_GLOBAL_OFFSET_TABLE_ $@
