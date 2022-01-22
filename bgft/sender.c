@@ -24,6 +24,9 @@ typedef uint32_t in_addr_t;
 typedef int socklen_t;
 #define SHUT_WR SD_SEND
 #define ERRNO WSAGetLastError()
+#ifdef ECONNREFUSED
+#undef ECONNREFUSED
+#endif
 #define ECONNREFUSED WSAECONNREFUSED
 #define VAR_PREFIX "_"
 
@@ -77,9 +80,6 @@ int main(int argc, const char** argv)
     }
     in_addr_t ps4_ip = 0;
     int interactive = 0;
-    int binloader_ports[3] = { 9021, 9020, 9090 };
-    int binloader_idx = 0;
-
     if(argv[2])
         ps4_ip = inet_addr(argv[2]);
     else
@@ -121,26 +121,30 @@ int main(int argc, const char** argv)
     struct sockaddr_in connect_addr = {
         .sin_family = AF_INET,
         .sin_addr = {.s_addr = ps4_ip},
-        .sin_port = htons(binloader_ports[binloader_idx])
+        .sin_port = 0,
     };
-retry_connect:;
-    SOCKET connect_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if(connect_sock == INVALID_SOCKET)
-        fail(closesocket(accept_sock), "Could not create socket");
-    printf("Trying to connect to port %d...\n", binloader_ports[binloader_idx]);
-    if(connect(connect_sock, (struct sockaddr*)&connect_addr, sizeof(connect_addr)))
+    int binloader_ports[3] = {9021, 9020, 9090};
+    SOCKET connect_sock;
+    for(int binloader_idx = 0; binloader_idx * sizeof(int) < sizeof(binloader_ports); binloader_idx++)
     {
-        if(ERRNO == ECONNREFUSED && connect_addr.sin_port == htons(binloader_ports[binloader_idx]))
+        connect_addr.sin_port = htons(binloader_ports[binloader_idx]);
+        connect_sock = socket(AF_INET, SOCK_STREAM, 0);
+        if(connect_sock == INVALID_SOCKET)
+            fail(closesocket(accept_sock), "Could not create socket");
+        printf("Trying to connect to port %d... ", binloader_ports[binloader_idx]);
+        if(!connect(connect_sock, (struct sockaddr*)&connect_addr, sizeof(connect_addr)))
         {
-            binloader_idx++;
-            if (binloader_idx < sizeof(binloader_ports) / sizeof(int)) {
-                connect_addr.sin_port = htons(binloader_ports[binloader_idx]);
-                closesocket(connect_sock);
-                goto retry_connect;
-            }
+            printf("ok\n");
+            break;
         }
-        fail(fclose(pkg); closesocket(accept_sock); closesocket(connect_sock), "Could not connect to PS4");
+        printf("fail\n");
+        closesocket(connect_sock);
+        connect_sock = INVALID_SOCKET;
+        if(ERRNO != ECONNREFUSED)
+            fail(fclose(pkg); closesocket(accept_sock), "Could not connect to PS4");
     }
+    if(connect_sock == INVALID_SOCKET)
+        fail(fclose(pkg); closesocket(accept_sock), "Could not connect to PS4");
     if(getsockname(connect_sock, (struct sockaddr*)&connect_addr, &sl))
         fail(fclose(pkg); closesocket(accept_sock); closesocket(connect_sock), "Could not get local address");
     size_t sz = payload_data_end - payload_data;
