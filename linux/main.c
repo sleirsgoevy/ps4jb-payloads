@@ -8,14 +8,16 @@
 #include <time.h>
 #include <ps4-offsets/kernel.h>
 
-#ifdef __7_55__
+#if defined(__9_00__)
+asm("ps4kexec:\n.incbin \"ps4-kexec-900/kexec.bin\"\nps4kexec_end:\n");
+#elif defined(__7_55__)
 asm("ps4kexec:\n.incbin \"ps4-kexec-755/kexec.bin\"\nps4kexec_end:\n");
-#else
-#ifdef __7_02__
+#elif defined(__7_02__)
 asm("ps4kexec:\n.incbin \"ps4-kexec-702/kexec.bin\"\nps4kexec_end:\n");
-#else
+#elif defined(__6_72__)
 asm("ps4kexec:\n.incbin \"ps4-kexec-672/kexec.bin\"\nps4kexec_end:\n");
-#endif
+#else
+#error "unsupported firmware"
 #endif
 
 extern char ps4kexec[];
