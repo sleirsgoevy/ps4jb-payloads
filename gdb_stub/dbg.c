@@ -22,6 +22,7 @@ extern int errno;
 #include <sys/mman.h>
 #include <stdarg.h>
 #include "dbg.h"
+#include "trap_state.h"
 
 #ifdef __PS4__
 #undef errno
@@ -354,40 +355,6 @@ static int read_signed_hex(pkt_opaque o, long long* q)
     return c;
 }
 
-struct regs
-{
-    unsigned long long rax;
-    unsigned long long rbx;
-    unsigned long long rcx;
-    unsigned long long rdx;
-    unsigned long long rsi;
-    unsigned long long rdi;
-    unsigned long long rbp;
-    unsigned long long rsp;
-    unsigned long long r8;
-    unsigned long long r9;
-    unsigned long long r10;
-    unsigned long long r11;
-    unsigned long long r12;
-    unsigned long long r13;
-    unsigned long long r14;
-    unsigned long long r15;
-    unsigned long long rip;
-    unsigned int eflags;
-    unsigned int cs;
-    unsigned int ss;
-    unsigned int ds;
-    unsigned int es;
-    unsigned int fs;
-    unsigned int gs;
-};
-
-struct trap_state
-{
-    int trap_signal;
-    struct regs regs;
-};
-
 int read_mem(unsigned char* buf, unsigned long long addr, int sz)
 {
     if(write(pipe_w, (const void*)addr, sz) != sz)
@@ -401,15 +368,44 @@ static void mprotect_byte(unsigned long long addr)
     mprotect((void*)(addr &~ (PAGE_SIZE - 1)), PAGE_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC);
 }
 
+#ifdef __PS4__
+
+int do_kexec_pk_read(void* a, void** b, int(**c)(void*, void*))
+{
+    asm volatile("cli\nmov %%cr0, %%rax\nbtc $16, %%rax\nmov %%rax, %%cr0":::"rax");
+    int ans = c[-47](a, b[1]);
+    asm volatile("mov %%cr0, %%rax\nbts $16, %%rax\nmov %%rax, %%cr0\nsti":::"rax");
+    return ans;
+}
+
+asm("kexec_pk_read:\nmov %rax, %rdx\njmp do_kexec_pk_read");
+
+extern char kexec_pk_read[];
+int kexec(void*, void*);
+
+ssize_t pk_read(int fd, void* data, size_t sz)
+{
+    if((intptr_t)data < 0)
+    {
+        uintptr_t args[3] = {fd, (uintptr_t)data, sz};
+        return kexec(kexec_pk_read, args);
+    }
+    return read(fd, data, sz);
+}
+
+#else
+#define pk_read read
+#endif
+
 static int write_mem(const unsigned char* buf, unsigned long long addr, int sz)
 {
     write(pipe_w, buf, sz);
-    if(read(pipe_r, (void*)addr, sz) != sz)
+    if(pk_read(pipe_r, (void*)addr, sz) != sz)
     {
         if(errno == EFAULT && sz == 1 && buf[0] == 0xcc) // sw breakpoint
         {
             mprotect_byte(addr);
-            if(read(pipe_r, (void*)addr, 1) == 1)
+            if(pk_read(pipe_r, (void*)addr, 1) == 1)
                 return 0;
         }
         int ans = -errno;
@@ -502,7 +498,7 @@ void serve_genfn_end(pkt_opaque o, srv_opaque p)
 void list_libs(pkt_opaque o);
 #endif
 
-static int main_loop(struct trap_state* ts, ssize_t* result, int* ern)
+int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern)
 {
     pkt_opaque o;
     int stop_sig = ts->trap_signal?ts->trap_signal:SIGTRAP;
@@ -882,7 +878,7 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
 #endif
         }
     };
-    main_loop(&ts, 0, 0);
+    gdbstub_main_loop(&ts, 0, 0);
 #ifdef __PS4__
     mc->mc_rax = ts.regs.rax;
     mc->mc_rcx = ts.regs.rcx;
@@ -954,7 +950,7 @@ long gdb_remote_syscall(const char* name, int nargs, int* ern, ...)
     va_end(ls);
     struct trap_state st = {0};
     ssize_t ans;
-    int status = main_loop(&st, &ans, ern);
+    int status = gdbstub_main_loop(&st, &ans, ern);
     __atomic_exchange_n(&in_signal_handler, 0, __ATOMIC_RELEASE);
     if(status == 2)
         kill(getpid(), SIGINT);

@@ -2,10 +2,18 @@
 #include <sys/thr.h>
 #include <sys/mman.h>
 #include <sys/types.h>
+#include <machine/sysarch.h>
 
 void k_get_td(void* td, void*** uap)
 {
     uap[1][0] = td;
+}
+
+void k_get_xfast_syscall(void* td, void*** uap)
+{
+    uint32_t low, high, which = 0xc0000082;
+    asm volatile("rdmsr":"=a"(low),"=d"(high):"c"(which));
+    uap[1][0] = (void*)((uint64_t)high << 32 | low);
 }
 
 void k_patch_kernel(void* td, void*** uap)
@@ -28,10 +36,22 @@ void* get_td(void)
     return ans;
 }
 
+void* get_xfast_syscall(void)
+{
+    void* ans;
+    kexec(k_get_xfast_syscall, &ans);
+    return ans;
+}
+
 void patch_kernel(void* addr, char* src, size_t sz)
 {
     void* payload[3] = {addr, src, (void*)sz};
     kexec(k_patch_kernel, payload);
+}
+
+void sidt(unsigned char* p)
+{
+    asm volatile("sidt (%0)"::"r"(p));
 }
 
 void* malloc(size_t sz)
@@ -42,5 +62,10 @@ void* malloc(size_t sz)
 int main(void)
 {
     dbg_enter();
-    thr_exit(0);
+    //detect being injected
+    void* fsbase = 0;
+    sysarch(AMD64_GET_FSBASE, &fsbase);
+    if(!fsbase)
+        thr_exit(0);
+    return 0;
 }
