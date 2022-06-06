@@ -46,10 +46,15 @@ while True:
             print('%012x %012x %s'%(i, j, k))
     elif cmd.startswith('inject '):
         pid, file = cmd[7:].split(' ', 1)
+        if ' ' in file:
+            addr, file = file.split(' ', 1)
+            addr = int(addr, 0)
+        else:
+            addr = 0
         pid = int(pid)
         try: data = open(file, 'rb').read()
         except IOError: print('File not found.')
-        else: y.sendall(b'\3\0\0\0'+pid.to_bytes(4, 'little')+len(data).to_bytes(8, 'little')+data)
+        else: y.sendall(b'\3\0\0\0'+pid.to_bytes(4, 'little')+len(data).to_bytes(8, 'little')+addr.to_bytes(8, 'little')+data)
     elif cmd.startswith('kill '):
         pid = int(cmd[5:])
         y.sendall(b'\4\0\0\0'+pid.to_bytes(4, 'little'))

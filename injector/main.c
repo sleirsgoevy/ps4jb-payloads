@@ -35,7 +35,7 @@ unsigned long long k_read8(unsigned long long ptr)
     return *(volatile unsigned char*)ptr;
 }
 
-asm("k_curthread:\nmov %fs:0, %rax\nret");
+asm("k_curthread:\nmov %gs:0, %rax\nret");
 extern char k_curthread[];
 
 void k_call(void* td, unsigned long long** uap)
@@ -160,7 +160,7 @@ void mmap_pid(int socket, pid_t pid)
     writeall(socket, (char*)buf, sizeof(buf));
 }
 
-void do_inject_payload(pid_t pid, const char* data, size_t len)
+void do_inject_payload(pid_t pid, const char* data, size_t len, uintptr_t map_addr)
 {
     unsigned long long sysent = kcall(k_xfast_syscall) - kernel_offset_xfast_syscall + kernel_offset_sysent;
     unsigned long long sys_mmap = kcall(k_read64, sysent + 48 * SYS_mmap + 8);
@@ -171,7 +171,7 @@ void do_inject_payload(pid_t pid, const char* data, size_t len)
     if(!proc)
         return;
     unsigned long long thread = kcall(k_read64, proc + 16);
-    unsigned long long mmap_args[6] = {0, len + 0x10000, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0};
+    unsigned long long mmap_args[6] = {map_addr, len + 0x10000, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0};
     kcall((void*)sys_mmap, thread, mmap_args);
     unsigned long long addr = kcall(k_read64, thread + 0x398);
     struct iovec iov = {
@@ -226,9 +226,11 @@ int main()
         {
             size_t data_len;
             readall(sock, (char*)&data_len, sizeof(data_len));
+            uintptr_t addr;
+            readall(sock, (char*)&addr, sizeof(addr));
             char* data = mmap(0, data_len, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
             readall(sock, data, data_len);
-            do_inject_payload(cmd[1], data, data_len);
+            do_inject_payload(cmd[1], data, data_len, addr);
             munmap(data, data_len);
         }
         else if(cmd[0] == 4)

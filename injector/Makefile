@@ -1,13 +1,13 @@
-all: payload.bin payload-702.bin payload-755.bin
+all: payload.bin payload-702.bin payload-755.bin payload-900.bin
 
 clean:
-	rm -f payload.elf payload.bin payload-702.elf payload-702.bin payload-755.elf payload-755.bin
+	rm -f payload.elf payload.bin payload-702.elf payload-702.bin payload-755.elf payload-755.bin payload-900.elf payload-900.bin
 
 ../lib/lib.a:
 	cd ../lib; make
 
 payload.elf: ../lib/lib.a main.c
-	gcc -mno-red-zone -g -isystem ../freebsd-headers -nostdinc -nostdlib -static ../lib/lib.a main.c -Wl,-gc-sections -o payload.elf -fPIE -ffreestanding
+	gcc -mno-red-zone -g -isystem ../freebsd-headers -nostdinc -nostdlib -static ../lib/lib.a -D__6_72__ main.c -Wl,-gc-sections -o payload.elf -fPIE -ffreestanding
 
 payload.bin: payload.elf
 	objcopy payload.elf --only-section .text --only-section .data --only-section .bss --only-section .rodata -O binary payload.bin
@@ -26,3 +26,10 @@ payload-755.elf: ../lib/lib.a main.c
 payload-755.bin: payload-755.elf
 	objcopy payload-755.elf --only-section .text --only-section .data --only-section .bss --only-section .rodata -O binary payload-755.bin
 	file payload-755.bin | fgrep -q 'payload-755.bin: DOS executable (COM)'
+
+payload-900.elf: ../lib/lib.a main.c
+	gcc -mno-red-zone -g -isystem ../freebsd-headers -nostdinc -nostdlib -static ../lib/lib.a -D__9_00__ main.c -Wl,-gc-sections -o payload-900.elf -fPIE -ffreestanding
+
+payload-900.bin: payload-900.elf
+	objcopy payload-900.elf --only-section .text --only-section .data --only-section .bss --only-section .rodata -O binary payload-900.bin
+	file payload-900.bin | fgrep -q 'payload-900.bin: DOS executable (COM)'
