@@ -36,6 +36,10 @@ unsigned long long get_syscall(void)
 void kernel_main()
 {
     unsigned long long kernel_base = get_syscall() - kernel_offset_xfast_syscall;
+    asm volatile("cli\nmov %%cr0, %%rax\nbtc $16, %%rax\nmov %%rax, %%cr0":::"rax");
+    *(char*)(kernel_base + kernel_patch_kmem_alloc_1) = 0x07;
+    *(char*)(kernel_base + kernel_patch_kmem_alloc_2) = 0x07;
+    asm volatile("mov %%cr0, %%rax\nbts $16, %%rax\nmov %%rax, %%cr0\nsti":::"rax");
     unsigned long long early_printf = kernel_base + kernel_offset_printf;
     unsigned long long kmem_alloc = kernel_base + kernel_offset_kmem_alloc;
     unsigned long long kernel_map = kernel_base + kernel_offset_kernel_map;
@@ -158,10 +162,11 @@ int main()
 #define L(name, where, wheresz, is_fatal)\
     if(read_file("/mnt/usb0/" name, where, wheresz)\
     && read_file("/mnt/usb1/" name, where, wheresz)\
-    && read_file(HDD_BOOT_PATH name, where, wheresz))\
+    && read_file(HDD_BOOT_PATH name, where, wheresz)\
+    && is_fatal)\
     {\
         alert("Failed to load file: " name ".\nPaths checked:\n/mnt/usb0/" name "\n/mnt/usb1/" name "\n" HDD_BOOT_PATH name);\
-        if (is_fatal) return 1;\
+        return 1;\
     }
     L("bzImage", &kernel, &kernel_size, 1);
     L("initramfs.cpio.gz", &initrd, &initrd_size, 1);
