@@ -8,3 +8,6 @@
 #define kernel_offset_kernel_map 0x21c8ee0
 #define kernel_offset_sysent 0x1125660
 #define kernel_offset_proc_rwmem 0x43e80
+
+#define kernel_patch_kmem_alloc_1 0x1171be
+#define kernel_patch_kmem_alloc_2 0x1171c6

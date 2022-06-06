@@ -171,6 +171,12 @@ static void ring0_mailbox_thread(void* ptr)
         while(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE));
         gdbstub_main_loop(&ts, 0, 0);
         __atomic_exchange_n(&in_signal_handler, 0, __ATOMIC_RELEASE);
+#ifdef INTERRUPTER_THREAD
+        {
+            void start_interrupter_thread(void);
+            start_interrupter_thread();
+        }
+#endif
         data.rax = ts.regs.rax;
         data.rcx = ts.regs.rcx;
         data.rdx = ts.regs.rdx;

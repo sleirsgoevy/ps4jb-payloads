@@ -807,6 +807,13 @@ void* interrupter_thread(void* o)
 #endif
 }
 
+void start_interrupter_thread(void)
+{
+    pthread_t child;
+    pthread_create(&child, NULL, interrupter_thread, NULL);
+    pthread_detach(child);
+}
+
 #endif
 
 static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
@@ -920,9 +927,7 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
 #endif
     __atomic_exchange_n(&in_signal_handler, 0, __ATOMIC_RELEASE);
 #ifdef INTERRUPTER_THREAD
-    pthread_t child;
-    pthread_create(&child, NULL, interrupter_thread, NULL);
-    pthread_detach(child);
+    start_interrupter_thread();
 #endif
 }
 
@@ -955,9 +960,7 @@ long gdb_remote_syscall(const char* name, int nargs, int* ern, ...)
     if(status == 2)
         kill(getpid(), SIGINT);
 #ifdef INTERRUPTER_THREAD
-    pthread_t child;
-    pthread_create(&child, NULL, interrupter_thread, NULL);
-    pthread_detach(child);
+    start_interrupter_thread();
 #endif
     return ans;
 }
