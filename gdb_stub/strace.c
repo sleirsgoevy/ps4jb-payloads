@@ -3,6 +3,8 @@
 #include <sys/sysctl.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/thr.h>
+#include <sys/socket.h>
 #include "dbg.h"
 
 int is_syscall_wrapper(uint8_t* p)
@@ -18,6 +20,8 @@ int is_syscall_wrapper(uint8_t* p)
         return *(volatile int32_t*)(p+3);
     return -1;
 }
+
+static int strace_pipe[2];
 
 void log_syscall_args(uint64_t* args)
 {
@@ -50,8 +54,7 @@ void log_syscall_args(uint64_t* args)
         }
     }
     *p++ = ')';
-    if(args[0] < 100)
-        gdb_remote_syscall("write", 3, 0, (uintptr_t)2, (uintptr_t)buf, (uintptr_t)(p-buf));
+    write(strace_pipe[1], buf, p-buf);
 }
 
 void log_syscall_ans(uint64_t ans, uint64_t flags)
@@ -86,14 +89,41 @@ void log_syscall_ans(uint64_t ans, uint64_t flags)
             *p++ = "0123456789abcdef"[(ans >> i) & 15];
     }
     *p++ = '\n';
-    //gdb_remote_syscall("write", 3, 0, (uintptr_t)2, (uintptr_t)buf, (uintptr_t)(p-buf));
+    write(strace_pipe[1], buf, p-buf);
 }
 
 extern char strace_log_start[];
 extern char strace_log_end[];
 
+void strace_thread(void* arg)
+{
+    char buf[1024];
+    ssize_t chk;
+    for(;;)
+    {
+        chk = read(strace_pipe[0], buf, 1024);
+        if(chk > 0)
+            gdb_remote_syscall("write", 3, NULL, (uintptr_t)2, (uintptr_t)buf, (uintptr_t)chk);
+    }
+}
+
 void start_strace(char* start, char* end)
 {
+    socketpair(AF_UNIX, SOCK_STREAM, 0, strace_pipe);
+    long x, y;
+    struct thr_param param = {
+        .start_func = strace_thread,
+        .arg = NULL,
+        .stack_base = mmap(0, 65536, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0),
+        .stack_size = 65536,
+        .tls_base = NULL,
+        .tls_size = 0,
+        .child_tid = &x,
+        .parent_tid = &y,
+        .flags = 0,
+        .rtp = NULL,
+    };
+    thr_new(&param, sizeof(param));
     size_t nsys = 0;
     for(char* i = start; i + 12 <= end; i++)
         if(is_syscall_wrapper((uint8_t*)i) >= 0)

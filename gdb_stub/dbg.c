@@ -750,9 +750,9 @@ void pthread_create(long* p_tid, void* _2, void* f, void* arg)
     static char* stack;
     static char* stack2;
     if(!stack)
-        stack = mmap(NULL, 65536, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
+        stack = mmap(NULL, 65536, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
     if(!stack2)
-        stack2 = mmap(NULL, 65536, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
+        stack2 = mmap(NULL, 65536, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
     struct thr_param param = {
         .start_func = (void(*)(void*))f,
         .arg = arg,
