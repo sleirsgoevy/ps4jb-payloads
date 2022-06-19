@@ -4,6 +4,8 @@
 #include <sys/types.h>
 #include <machine/sysarch.h>
 
+#if 0
+
 void k_get_td(void* td, void*** uap)
 {
     uap[1][0] = td;
@@ -49,6 +51,8 @@ void patch_kernel(void* addr, char* src, size_t sz)
     kexec(k_patch_kernel, payload);
 }
 
+#endif
+
 void sidt(unsigned char* p)
 {
     asm volatile("sidt (%0)"::"r"(p));
@@ -56,16 +60,18 @@ void sidt(unsigned char* p)
 
 void* malloc(size_t sz)
 {
-    return mmap(0, sz, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    return mmap(0, sz, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
 }
 
 int main(void)
 {
     dbg_enter();
+#if 0
     //detect being injected
     void* fsbase = 0;
     sysarch(AMD64_GET_FSBASE, &fsbase);
     if(!fsbase)
         thr_exit(0);
     return 0;
+#endif
 }

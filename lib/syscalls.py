@@ -1,67 +1,41 @@
 import urllib.request, http.client, html
 
-def get_freebsd_syscalls():
-    data = urllib.request.urlopen('https://raw.githubusercontent.com/freebsd/freebsd/stable/9/sys/kern/syscalls.master').read().decode('ascii')
-    data = '\n'.join(i.strip() for i in data.split('\n') if not i.startswith(';')).replace('\\\n', ' ')
-    assert data.startswith('$FreeBSD$\n')
-    data = data[10:]
-    ans = {}
-    for i in data.split('\n'):
-        i = i.strip()
-        if not i or 'STD' not in i.split() or i.startswith('#include'): continue
-        name = i.split('(', 1)[0].split()[-1]
-        idx = int(i.split()[0])
-        ans[idx] = name
-    return ans
-
-def get_sony_syscalls():
-    #cli = http.client.HTTPSConnection('www.psdevwiki.com')
-    #cli.request('GET', '/ps4/edit/Syscalls')
-    #r = cli.getresponse()
-    r = urllib.request.urlopen('http://web.archive.org/web/20210124215126js_/https://psdevwiki.com/ps4/edit/Syscalls')
-    data = html.unescape(r.read().decode('latin-1').split('<textarea ', 1)[1].split('</textarea>', 1)[0])
-    ans = {}
-    for i in data.split('\n'):
-        if i.startswith('| '):
-            try:
-                syscno, fw, syscname, proto, notes = i[2:].split(' || ')
-                syscno = int(syscno)
-            except ValueError: continue
-            if syscname.startswith('sys_'):
-                ans[syscno] = syscname[4:]
-    return ans
-
-def get_syscalls():
-    ans = {}
-    ans.update(get_freebsd_syscalls())
-    ans.update(get_sony_syscalls())
-    ans[11] = 'kexec'
-    return ans
-
-print('section .text')
+print('global addr__dynlib_dlsym')
 print('use64')
-print()
 
-for idx, name in sorted(get_syscalls().items()):
-    if '#' in name: continue
-    print('section .text.'+name+' exec')
-    print('global', name)
-    print(name+':')
-    print('mov rax,', idx)
-    print('mov r10, rcx')
-    print('syscall')
-    print('jc set_err')
-    print('ret')
-    print()
-
-print('section .text.set_err exec')
-print('set_err:')
-print('mov [rel errno], eax')
-print('xor rax, rax')
-print('dec rax')
-print('ret')
-print()
-
-print('section .bss')
-print('global errno')
-print('errno resw 1')
+with open('syscalls.txt') as file:
+    for l in map(str.split, file):
+        if not l: continue
+        i, j = l
+        if j == 'UNKNOWN' or j == 'MISSING' or j == 'HIDDEN':
+            continue
+        print('section .text.'+i, 'exec')
+        print('global', i)
+        print(i+':')
+        print('cmp qword [rel addr__'+i+'], 0')
+        print('jne .resolved')
+        print('push rdi')
+        print('push rsi')
+        print('push rdx')
+        print('push rcx')
+        print('push r8')
+        print('push r9')
+        print('push rax')
+        print('mov edi, 0x2001')
+        print('lea rsi, [rel str__'+i+']')
+        print('lea rdx, [rel addr__'+i+']')
+        print('call [rel addr__dynlib_dlsym]')
+        print('pop rax')
+        print('pop r9')
+        print('pop r8')
+        print('pop rcx')
+        print('pop rdx')
+        print('pop rsi')
+        print('pop rdi')
+        print('.resolved:')
+        print('jmp [rel addr__'+i+']')
+        print('str__'+i+':')
+        print('db "'+j+'", 0')
+        print('section .bss.'+i)
+        print('addr__'+i+':')
+        print('dq 0')

@@ -1,9 +1,10 @@
 #ifdef __PS4__
 #define _BSD_SOURCE
-extern int errno;
-#define errno not_errno
-#define pthread_t not_pthread_t
-#include <sys/thr.h>
+//extern int errno;
+//#define errno not_errno
+//#define pthread_t not_pthread_t
+//#include <sys/thr.h>
+#include <pthread.h>
 #include <machine/sysarch.h>
 #else
 #define _GNU_SOURCE
@@ -25,8 +26,8 @@ extern int errno;
 #include "trap_state.h"
 
 #ifdef __PS4__
-#undef errno
-#undef pthread_t
+//#undef errno
+//#undef pthread_t
 #define PAGE_SIZE 16384ull
 #else
 #define PAGE_SIZE 4096ull
@@ -368,7 +369,7 @@ static void mprotect_byte(unsigned long long addr)
     mprotect((void*)(addr &~ (PAGE_SIZE - 1)), PAGE_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC);
 }
 
-#ifdef __PS4__
+#if 0 //def __PS4__
 
 int do_kexec_pk_read(void* a, void** b, int(**c)(void*, void*))
 {
@@ -738,7 +739,7 @@ int in_signal_handler = 0;
 
 #if defined(INTERRUPTER_THREAD) || defined(STDIO_REDIRECT)
 
-#ifdef __PS4__
+#if 0 //def __PS4__
 // mock code, to make main code cleaner
 // not "real" pthreads
 
@@ -783,7 +784,7 @@ long pthread_self()
 
 #ifdef INTERRUPTER_THREAD
 
-void* interrupter_thread(void* o)
+void block_sigint(void)
 {
 #ifdef __PS4__
     sigset_t ss = {0};
@@ -795,6 +796,11 @@ void* interrupter_thread(void* o)
     sigaddset(&ss, SIGINT);
     pthread_sigmask(SIG_BLOCK, &ss, NULL);
 #endif
+}
+
+void* interrupter_thread(void* o)
+{
+    block_sigint();
     fd_set a, b;
     FD_ZERO(&a);
     FD_ZERO(&b);
@@ -803,7 +809,7 @@ void* interrupter_thread(void* o)
     if(!in_signal_handler)
         kill(getpid(), SIGINT);
 #ifdef __PS4__
-    thr_exit(0);
+    //thr_exit(0);
 #endif
 }
 
@@ -996,16 +1002,7 @@ static int replace_with_socket(int fd)
 
 static void* stdio_redirect_thread(void* o)
 {
-#ifdef __PS4__
-    sigset_t ss = {0};
-	ss.__bits[_SIG_WORD(SIGINT)] |= _SIG_BIT(SIGINT);
-    sigprocmask(SIG_BLOCK, &ss, NULL);
-#else
-    sigset_t ss;
-    sigemptyset(&ss);
-    sigaddset(&ss, SIGINT);
-    pthread_sigmask(SIG_BLOCK, &ss, NULL);
-#endif
+    block_sigint();
     fd_set s;
     int fds[2] = {gdb_stdout_read, gdb_stderr_read};
     while(fds[0] >= 0 || fds[1] >= 0)
@@ -1041,7 +1038,7 @@ static void* stdio_redirect_thread(void* o)
         }
     }
 #ifdef __PS4__
-    thr_exit(0);
+    //thr_exit(0);
 #endif
     return NULL;
 }
@@ -1097,22 +1094,26 @@ void real_dbg_enter(uint64_t* rsp)
 #endif
 #endif
     int sock = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in sa = {
-        .sin_family = AF_INET,
-        .sin_addr = {.s_addr = 0},
-        .sin_port = 0xd204,
-    };
     int reuse = 1;
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, 4);
+    int brv = 1;
+    for(int port = 1234; port < 65536 && brv; port++)
+    {
+        struct sockaddr_in sa = {
+            .sin_family = AF_INET,
+            .sin_addr = {.s_addr = 0},
+            .sin_port = (port >> 8) | (port << 8),
+        };
 #if defined(__PS4__) && defined(PS4LIBS)
-    void ps4_xchg_budget(int*);
-    int budget = 2;
-    ps4_xchg_budget(&budget);
+        void ps4_xchg_budget(int*);
+        int budget = 2;
+        ps4_xchg_budget(&budget);
 #endif
-    int brv = bind(sock, (struct sockaddr*)&sa, sizeof(sa));
+        brv = bind(sock, (struct sockaddr*)&sa, sizeof(sa));
 #if defined(__PS4__) && defined(PS4LIBS)
-    ps4_xchg_budget(&budget);
+        ps4_xchg_budget(&budget);
 #endif
+    }
     if(brv)
         return;
     listen(sock, 1);

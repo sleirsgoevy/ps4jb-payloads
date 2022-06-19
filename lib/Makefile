@@ -12,7 +12,7 @@ crt.o: crt.asm
 syscalls.o: syscalls.asm
 	yasm -f elf64 syscalls.asm
 
-syscalls.asm: syscalls.py
+syscalls.asm: syscalls.py syscalls.txt
 	python3 syscalls.py > syscalls.asm
 
 lib.a: crt.o dl.o syscalls.o
