@@ -211,6 +211,7 @@ static const char* commands[] = {
     "G",
     "H",
     "M",
+    "Z",
     "c",
     "g",
     "k",
@@ -228,6 +229,7 @@ static const char* commands[] = {
     "qXfer:libraries-svr4:read:",
 #endif
     "s",
+    "z",
 };
 
 #ifdef __PS4__
@@ -267,6 +269,7 @@ enum
     CMD_G_WRITE,
     CMD_H,
     CMD_M_WRITE,
+    CMD_Z_SET,
     CMD_C,
     CMD_G_READ,
     CMD_K,
@@ -284,6 +287,7 @@ enum
     CMD_QXFER_LIBRARIES,
 #endif
     CMD_S,
+    CMD_Z_UNSET,
 };
 
 static int match_packet(pkt_opaque o)
@@ -499,8 +503,65 @@ void serve_genfn_end(pkt_opaque o, srv_opaque p)
 void list_libs(pkt_opaque o);
 #endif
 
+#define NEMUBREAK 64
+
+static int break_flags[NEMUBREAK];
+static uintptr_t break_addr[NEMUBREAK];
+
+static inline int have_breakpoint(uintptr_t addr)
+{
+    for(int i = 0; i < NEMUBREAK; i++)
+        if(break_flags[i] && break_addr[i] == addr)
+            return 1;
+    return 0;
+}
+
+static inline int set_breakpoint(uintptr_t addr)
+{
+    for(int i = 0; i < NEMUBREAK; i++)
+        if(break_flags[i] && break_addr[i] == addr)
+        {
+            break_flags[i]++;
+            return 1;
+        }
+    for(int i = 0; i < NEMUBREAK; i++)
+        if(!break_flags[i])
+        {
+            break_addr[i] = addr;
+            break_flags[i] = 1;
+            return 1;
+        }
+    return 0;
+}
+
+static inline int remove_breakpoint(uintptr_t addr)
+{
+    for(int i = 0; i < NEMUBREAK; i++)
+        if(break_flags[i] && break_addr[i] == addr)
+        {
+            break_flags[i]--;
+            return 1;
+        }
+    return 0;
+}
+
+static inline int any_breakpoints(void)
+{
+    for(int i = 0; i < NEMUBREAK; i++)
+        if(break_flags[i])
+            return 1;
+    return 0;
+}
+
 int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern)
 {
+    static int cont_mode = 0;
+    if(cont_mode && !have_breakpoint(ts->regs.rip))
+    {
+        ts->regs.eflags |= 256;
+        return 0;
+    }
+    cont_mode = 0;
     pkt_opaque o;
     int stop_sig = ts->trap_signal?ts->trap_signal:SIGTRAP;
     char stop_reason[3] = {'T', int2hex(stop_sig >> 4), int2hex(stop_sig & 15)};
@@ -649,6 +710,12 @@ int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern)
             start_packet(o);
             PKT_PUTS(o, "OK");
             end_packet(o);
+            if(any_breakpoints())
+            {
+                if(!(ts->regs.eflags & 256))
+                    cont_mode = 1;
+                ts->regs.eflags |= 256;
+            }
             return 0;
         case CMD_Q_ATTACHED:
             skip_to_end(o);
@@ -725,6 +792,32 @@ int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern)
             start_packet(o);
             end_packet(o);
             kill(getpid(), SIGKILL);
+        case CMD_Z_SET:
+        {
+            unsigned long long q = -1;
+            unsigned long long addr = -1;
+            read_hex(o, &q);
+            read_hex(o, &addr);
+            skip_to_end(o);
+            start_packet(o);
+            if(q == 0 && set_breakpoint(addr))
+                PKT_PUTS(o, "OK");
+            end_packet(o);
+            break;
+        }
+        case CMD_Z_UNSET:
+        {
+            unsigned long long q = -1;
+            unsigned long long addr = -1;
+            read_hex(o, &q);
+            read_hex(o, &addr);
+            skip_to_end(o);
+            start_packet(o);
+            if(q == 0 && remove_breakpoint(addr))
+                PKT_PUTS(o, "OK");
+            end_packet(o);
+            break;
+        }
         default:
             skip_to_end(o);
         case CMD_EOL:
