@@ -45,8 +45,10 @@ push rdx
 push rsi
 push rdi
 pushfq
-mov rdi, rax
-mov rsi, [rsp]
+mov rcx, rax
+mov r8, [rsp]
+mov r9, [rsp+40]
+mov r9d, [r9+24]
 push rbp
 mov rbp, rsp
 and rsp, -16

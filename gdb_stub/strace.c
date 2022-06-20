@@ -23,9 +23,112 @@ int is_syscall_wrapper(uint8_t* p)
 
 static int strace_pipe[2];
 
+long strace_tid = -2;
+int* strace_filter_program = 0;
+
+int strace_filter(int sysc)
+{
+    if(!strace_filter_program)
+        return 1;
+    int i;
+    for(i = 0; strace_filter_program[i] != -1 && strace_filter_program[i] != sysc; i += 2);
+    return strace_filter_program[i+1];
+}
+
+void strace_current(void)
+{
+    thr_self(&strace_tid);
+}
+
+void strace_all(void)
+{
+    strace_tid = -1;
+}
+
+static int strace_read_mem(uintptr_t ptr)
+{
+    int p[2];
+    if(socketpair(AF_UNIX, SOCK_STREAM, 0, p))
+        return -1;
+    uint8_t ans;
+    if(write(p[1], (void*)ptr, 1) != 1
+    || read(p[0], &ans, 1) != 1)
+    {
+        close(p[0]);
+        close(p[1]);
+        return -1;
+    }
+    close(p[0]);
+    close(p[1]);
+    return ans;
+}
+
+static char* log_arg(uint64_t q, int flag, char* buf, char* p, uint64_t* args)
+{
+    if(!flag)
+    {
+        *p++ = '0';
+        *p++ = 'x';
+        int j = 0;
+        while(j < 60 && (q >> j) >= 16)
+            j += 4;
+        for(; j >= 0; j -= 4)
+            *p++ = "0123456789abcdef"[(q >> j) & 15];
+    }
+    else
+    {
+        size_t len;
+        if(flag == 7)
+        {
+            for(len = 0; strace_read_mem(q + len) > 0; len++);
+        }
+        else
+            len = args ? args[flag] : 32;
+        *p++ = '"';
+        for(size_t i = 0; i < len; i++)
+        {
+            int j = strace_read_mem(q + i);
+            if(j < 0)
+            {
+                *p++ = '\\';
+                *p++ = '!';
+            }
+            else if(j >= ' ' && j <= '~')
+                *p++ = j;
+            else
+            {
+                *p++ = '\\';
+                *p++ = 'x';
+                *p++ = "0123456789abcdef"[j >> 4];
+                *p++ = "0123456789abcdef"[j & 15];
+            }
+            if(p - buf >= 250)
+            {
+                write(strace_pipe[1], buf, p-buf);
+                p = buf;
+            }
+        }
+        if(!args)
+        {
+            *p++ = '.';
+            *p++ = '.';
+            *p++ = '.';
+        }
+        *p++ = '"';
+    }
+    return p;
+}
+
 void log_syscall_args(uint64_t* args)
 {
-    char buf[256];
+    long tid;
+    thr_self(&tid);
+    if(strace_tid != -1 && strace_tid != tid)
+        return;
+    int filter = strace_filter(args[0]);
+    if(!filter)
+        return;
+    char buf[512];
     char* p = buf;
     uint64_t nr = args[0];
     uint64_t i = 1;
@@ -40,13 +143,10 @@ void log_syscall_args(uint64_t* args)
     for(int i = 1; i <= 6; i++)
     {
         uint64_t q = args[i];
-        *p++ = '0';
-        *p++ = 'x';
-        int j = 0;
-        while(j < 60 && (q >> j) >= 16)
-            j += 4;
-        for(; j >= 0; j -= 4)
-            *p++ = "0123456789abcdef"[(q >> j) & 15];
+        int flag = (filter >> (3 * i)) & 7;
+        if(i < 3 && ((filter >> i) & 1))
+            flag = 0;
+        p = log_arg(q, flag, buf, p, args);
         if(i != 6)
         {
             *p++ = ',';
@@ -57,13 +157,36 @@ void log_syscall_args(uint64_t* args)
     write(strace_pipe[1], buf, p-buf);
 }
 
-void log_syscall_ans(uint64_t ans, uint64_t flags)
+void log_syscall_ans(uint64_t rdi, uint64_t rsi, uint64_t rdx, uint64_t ans, uint64_t flags, int sysc)
 {
-    char buf[64];
+    long tid;
+    thr_self(&tid);
+    if(strace_tid != -1 && strace_tid != tid)
+        return;
+    int filter = strace_filter(sysc);
+    if(!filter)
+        return;
+    char buf[512];
     char* p = buf;
     *p++ = ' ';
     *p++ = '=';
     *p++ = ' ';
+    if((filter & 6))
+        *p++ = '[';
+    if((filter & 2))
+        p = log_arg(rdi, (filter >> 3) & 7, buf, p, 0);
+    if((filter & 6) == 6)
+    {
+        *p++ = ',';
+        *p++ = ' ';
+    }
+    if((filter & 4))
+        p = log_arg(rsi, (filter >> 6) & 7, buf, p, 0);
+    if((filter & 6))
+    {
+        *p++ = ']';
+        *p++ = ' ';
+    }
     if((flags & 1))
     {
         char* s = "-1, errno = ";
@@ -169,4 +292,17 @@ void start_strace(char* start, char* end)
             i += 11;
         }
     }
+    char buf[100] = "Instrumented ";
+    char* p = buf + 13;
+    size_t q = 1;
+    while(nsys / q >= 10)
+        q *= 10;
+    while(q > 0)
+    {
+        *p++ = '0' + (nsys / q) % 10;
+        q /= 10;
+    }
+    for(int i = 0; i < 10; i++)
+        *p++ = " syscalls\n"[i];
+    gdb_remote_syscall("write", 3, NULL, (uintptr_t)2, (uintptr_t)buf, (uintptr_t)(p - buf));
 }
