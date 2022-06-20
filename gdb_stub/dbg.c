@@ -1083,6 +1083,30 @@ __attribute__((naked)) void dbg_enter()
     asm volatile("mov %rsp, %rdi\njmp real_dbg_enter");
 }
 
+static void unblock_signals(void)
+{
+#ifdef __PS4__
+    sigset_t ss = {0};
+	ss.__bits[_SIG_WORD(SIGTRAP)] |= _SIG_BIT(SIGTRAP);
+	ss.__bits[_SIG_WORD(SIGILL)] |= _SIG_BIT(SIGILL);
+	ss.__bits[_SIG_WORD(SIGBUS)] |= _SIG_BIT(SIGBUS);
+	ss.__bits[_SIG_WORD(SIGINT)] |= _SIG_BIT(SIGINT);
+	ss.__bits[_SIG_WORD(SIGSYS)] |= _SIG_BIT(SIGSYS);
+	ss.__bits[_SIG_WORD(SIGSEGV)] |= _SIG_BIT(SIGSEGV);
+    sigprocmask(SIG_UNBLOCK, &ss, NULL);
+#else
+    sigset_t ss;
+    sigemptyset(&ss);
+    sigaddset(&ss, SIGTRAP);
+    sigaddset(&ss, SIGILL);
+    sigaddset(&ss, SIGBUS);
+    sigaddset(&ss, SIGINT);
+    sigaddset(&ss, SIGSYS);
+    sigaddset(&ss, SIGSEGV);
+    pthread_sigmask(SIG_UNBLOCK, &ss, NULL);
+#endif
+}
+
 void real_dbg_enter(uint64_t* rsp)
 {
 #ifdef __PS4__
@@ -1131,17 +1155,18 @@ void real_dbg_enter(uint64_t* rsp)
         .sa_sigaction = signal_handler,
         .sa_flags = SA_SIGINFO
     };
-    sigaction(SIGTRAP, &siga, NULL);
-    sigaction(SIGILL, &siga, NULL);
-    sigaction(SIGBUS, &siga, NULL);
-    sigaction(SIGINT, &siga, NULL);
-    sigaction(SIGSYS, &siga, NULL);
+    int a = sigaction(SIGTRAP, &siga, NULL);
+    int b = sigaction(SIGILL, &siga, NULL);
+    int c = sigaction(SIGBUS, &siga, NULL);
+    int d = sigaction(SIGINT, &siga, NULL);
+    int e = sigaction(SIGSYS, &siga, NULL);
     siga.sa_sigaction = tmp_sigsegv;
-    sigaction(SIGSEGV, &siga, NULL);
+    int f = sigaction(SIGSEGV, &siga, NULL);
 #ifdef STDIO_REDIRECT
     gdb_setup_redir();
 #endif
     // set debugger entry
     start_rip = *rsp;
     *rsp = 0;
+    unblock_signals();
 }
