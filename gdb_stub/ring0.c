@@ -7,8 +7,10 @@
 extern char r0hook_start[];
 extern char r0hook_int1[];
 extern char r0hook_int3[];
+extern char r0hook_int13[];
 extern char r0hook_real_int1[];
 extern char r0hook_real_int3[];
+extern char r0hook_real_int13[];
 extern char r0hook_mailbox[];
 extern char r0hook_end[];
 
@@ -74,6 +76,7 @@ static void install_code(void)
         kernel_base[i - r0hook_start] = *i;
     *(volatile uint64_t*)(kernel_base + (r0hook_real_int1 - r0hook_start)) = replace_interrupt(1, (uintptr_t)(kernel_base + (r0hook_int1 - r0hook_start)));
     *(volatile uint64_t*)(kernel_base + (r0hook_real_int3 - r0hook_start)) = replace_interrupt(3, (uintptr_t)(kernel_base + (r0hook_int3 - r0hook_start)));
+    *(volatile uint64_t*)(kernel_base + (r0hook_real_int13 - r0hook_start)) = replace_interrupt(13, (uintptr_t)(kernel_base + (r0hook_int13 - r0hook_start)));
     ENABLE_WP();
 }
 
@@ -166,7 +169,9 @@ static void ring0_mailbox_thread(void* ptr)
                 .ss = data.cs,
             },
         };
-        if(data.int_no == 3)
+        if(data.int_no == 13)
+            ts.trap_signal = SIGBUS;
+        else if(data.int_no == 3)
             ts.regs.rip--;
         while(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE));
         gdbstub_main_loop(&ts, 0, 0);

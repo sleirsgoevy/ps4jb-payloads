@@ -21,7 +21,7 @@ payload-ring0.bin: payload-ring0.elf
 	file payload-ring0.bin | fgrep -q 'payload-ring0.bin: DOS executable (COM)'
 
 payload-strace.elf: ../lib/lib.a dbg.c ps4libs.c main.c strace.c strace_asm.o
-	gcc -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -fPIE -ffreestanding -mno-red-zone -static ../lib/lib.a -D__PS4__ -DINTERRUPTER_THREAD -DPS4LIBS dbg.c main.c ps4libs.c strace.c strace_asm.o -o payload-strace.elf
+	gcc -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -fPIE -ffreestanding -mno-red-zone -static ../lib/lib.a -D__PS4__ -DINTERRUPTER_THREAD -DPS4LIBS -DSTDIO_REDIRECT dbg.c main.c ps4libs.c strace.c strace_asm.o -o payload-strace.elf
 
 payload-strace.bin: payload-strace.elf
 	objcopy payload-strace.elf --only-section .text --only-section .data --only-section .bss --only-section .rodata --set-section-flags .bss=alloc,load,contents -O binary payload-strace.bin

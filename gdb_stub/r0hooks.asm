@@ -3,8 +3,10 @@ use64
 global r0hook_start
 global r0hook_int1
 global r0hook_int3
+global r0hook_int13
 global r0hook_real_int1
 global r0hook_real_int3
+global r0hook_real_int13
 global r0hook_mailbox
 global r0hook_end
 
@@ -13,6 +15,12 @@ global r0hook_end
 section .text
 
 r0hook_start:
+
+r0hook_int13:
+test byte [rsp+8], 3
+jnz r0hook_go_real13
+push dword 13
+jmp r0hook_entry
 
 r0hook_int1:
 test byte [rsp+8], 3
@@ -23,7 +31,7 @@ jmp r0hook_entry
 r0hook_int3:
 test byte [rsp+8], 3
 jnz r0hook_go_real3
-push dword 2
+push dword 3
 ; fallthrough
 
 r0hook_entry:
@@ -73,12 +81,12 @@ btc rax, 16
 mov cr0, rax
 xor eax, eax
 lock cmpxchg [rel r0hook_mailbox], rsp
-sete al
+sete cl
 mov rax, cr0
 bts rax, 16
 mov cr0, rax
 sti
-test al, al
+test cl, cl
 jz cmpxchg_loop
 
 r0hook_loop:
@@ -119,10 +127,16 @@ jmp [rel r0hook_real_int1]
 r0hook_go_real3:
 jmp [rel r0hook_real_int3]
 
+r0hook_go_real13:
+jmp [rel r0hook_real_int13]
+
 r0hook_real_int1:
 dq 0
 
 r0hook_real_int3:
+dq 0
+
+r0hook_real_int13:
 dq 0
 
 r0hook_mailbox:
