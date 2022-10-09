@@ -211,7 +211,9 @@ static const char* commands[] = {
     "G",
     "H",
     "M",
+#ifndef NO_BREAKPOINT_EMULATION
     "Z",
+#endif
     "c",
     "g",
     "k",
@@ -269,7 +271,9 @@ enum
     CMD_G_WRITE,
     CMD_H,
     CMD_M_WRITE,
+#ifndef NO_BREAKPOINT_EMULATION
     CMD_Z_SET,
+#endif
     CMD_C,
     CMD_G_READ,
     CMD_K,
@@ -792,6 +796,7 @@ int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern)
             start_packet(o);
             end_packet(o);
             kill(getpid(), SIGKILL);
+#ifndef NO_BREAKPOINT_EMULATION
         case CMD_Z_SET:
         {
             unsigned long long q = -1;
@@ -805,6 +810,7 @@ int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern)
             end_packet(o);
             break;
         }
+#endif
         case CMD_Z_UNSET:
         {
             unsigned long long q = -1;
