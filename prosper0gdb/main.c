@@ -210,9 +210,9 @@ static void r0gdb_setup(void)
     uint64_t idt = kdata_base + 0x64cdc80;
     uint64_t tss = kdata_base + 0x64d0830;
     uint64_t tss13 = tss + 13 * 0x68;
-    uint64_t pcpu13 = kdata_base + 0x64d9780;
     volatile uint64_t iret = kdata_base - 0x9cf84c;
     volatile uint64_t add_rsp_0xe8_iret = iret - 7;
+    volatile uint64_t swapgs_add_rsp_0xe8_iret = iret - 10;
     //set up stacks
     uint64_t gadget_stack = kmalloc(2048);
     char utss[0x68];
@@ -228,7 +228,7 @@ static void r0gdb_setup(void)
     kwrite20(tframe, iret, 0x20, 0);
     kwrite20(tframe+16, 2, kframe, 0);
     //set up gates
-    volatile char* addr = (void*)&add_rsp_0xe8_iret;
+    volatile char* addr = (void*)&swapgs_add_rsp_0xe8_iret;
     char gate[16] = {0};
     gate[0] = addr[0];
     gate[1] = addr[1];
@@ -245,8 +245,6 @@ static void r0gdb_setup(void)
     gate[4] = 3;
     gate[5] = 0xee;
     copyin(idt+9*16, gate, 16);
-    //synchronize gsbase
-    sysarch(AMD64_SET_GSBASE, (void*)&pcpu13);
 }
 
 static void r0gdb_loop(void)

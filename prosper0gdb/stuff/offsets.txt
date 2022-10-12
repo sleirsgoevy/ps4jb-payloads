@@ -1,7 +1,8 @@
 # offsets
 p "data is for cpu 0"
-p $gdt = kdata_base + 0x64cee30
-p $idt = kdata_base + 0x64cdc80
-p $tss = kdata_base + 0x64d0830
-p $tss13 = $tss + 13 * 0x68
-p $iret = kdata_base - 0x9cf84c
+p/x $gdt = kdata_base + 0x64cee30
+p/x $idt = kdata_base + 0x64cdc80
+p/x $tss = kdata_base + 0x64d0830
+p/x $tss13 = $tss + 13 * 0x68
+p/x $iret = kdata_base - 0x9cf84c
+p/x $pcpu13 = kdata_base + 0x64d9780
