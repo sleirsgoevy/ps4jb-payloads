@@ -365,12 +365,16 @@ static int read_signed_hex(pkt_opaque o, long long* q)
 }
 
 int read_mem(unsigned char* buf, unsigned long long addr, int sz)
+#ifdef MEM_HELPERS
+    ;
+#else
 {
     if(write(pipe_w, (const void*)addr, sz) != sz)
         return -errno;
     read(pipe_r, buf, sz);
     return 0;
 }
+#endif
 
 static void mprotect_byte(unsigned long long addr)
 {
@@ -407,6 +411,9 @@ ssize_t pk_read(int fd, void* data, size_t sz)
 #endif
 
 static int write_mem(const unsigned char* buf, unsigned long long addr, int sz)
+#ifdef MEM_HELPERS
+    ;
+#else
 {
     write(pipe_w, buf, sz);
     if(pk_read(pipe_r, (void*)addr, sz) != sz)
@@ -425,6 +432,7 @@ static int write_mem(const unsigned char* buf, unsigned long long addr, int sz)
     }
     return 0;
 }
+#endif
 
 void serve_string(pkt_opaque o, char* s, unsigned long long l, int has_annex)
 {
