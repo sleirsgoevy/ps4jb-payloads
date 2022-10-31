@@ -121,16 +121,6 @@ ssize_t copyin(uint64_t dst, const void* src, size_t count)
     return write(the_pipe[1], src, count);
 }
 
-void int9(void)
-{
-    asm volatile("int $9");
-}
-
-void int9_loop(void)
-{
-    asm volatile("int $9\nud2");
-}
-
 void* dlsym(void*, const char*);
 
 uint64_t get_thread(void)
@@ -200,8 +190,11 @@ static uint64_t kstack;
 uint64_t kframe;
 uint64_t uretframe;
 
-static void r0gdb_setup(void)
+static void r0gdb_setup(int do_swapgs)
 {
+    static int init_run = 0;
+    if(init_run)
+        return;
     //pin ourselves to cpu 2 (13 in apic order)
     char affinity[16] = {4};
     cpuset_setaffinity(3, 1, *((int*(*)())dlsym((void*)0x2001, "pthread_self"))(), 16, (void*)affinity);
@@ -213,6 +206,7 @@ static void r0gdb_setup(void)
     volatile uint64_t iret = kdata_base - 0x9cf84c;
     volatile uint64_t add_rsp_0xe8_iret = iret - 7;
     volatile uint64_t swapgs_add_rsp_0xe8_iret = iret - 10;
+    uint64_t memcpy_addr = kdata_base - 0x990a55;
     //set up stacks
     uint64_t gadget_stack = kmalloc(2048);
     char utss[0x68];
@@ -220,6 +214,7 @@ static void r0gdb_setup(void)
     kstack = *(volatile uint64_t*)(utss+0x3c) - 0x28;
     *(volatile uint64_t*)(utss+0x34) = gadget_stack + 0xe0;
     *(volatile uint64_t*)(utss+0x3c) = gadget_stack + 0x1f0;
+    *(volatile uint64_t*)(utss+0x4c) = gadget_stack + 0x440;
     copyin(tss13, utss, 0x68);
     uint64_t tframe = gadget_stack + 0x1a0;
     kframe = gadget_stack + 0x1c8;
@@ -227,8 +222,12 @@ static void r0gdb_setup(void)
     //set up trampoline frame
     kwrite20(tframe, iret, 0x20, 0);
     kwrite20(tframe+16, 2, kframe, 0);
+    //set up int179 frames
+    kwrite20(gadget_stack+0x408, 0, iret, 0);
+    kwrite20(gadget_stack+0x500, memcpy_addr, 0x20, 0);
+    kwrite20(gadget_stack+0x510, 0x40002, gadget_stack+0x408, 0);
     //set up gates
-    volatile char* addr = (void*)&swapgs_add_rsp_0xe8_iret;
+    volatile char* addr = do_swapgs ? (void*)&swapgs_add_rsp_0xe8_iret : (void*)&add_rsp_0xe8_iret;
     char gate[16] = {0};
     gate[0] = addr[0];
     gate[1] = addr[1];
@@ -245,6 +244,14 @@ static void r0gdb_setup(void)
     gate[4] = 3;
     gate[5] = 0xee;
     copyin(idt+9*16, gate, 16);
+    gate[4] = 6;
+    copyin(idt+179*16, gate, 16);
+    init_run = 1;
+}
+
+void r0gdb_exit(void)
+{
+    //no-op, checked by comparing rip
 }
 
 static void r0gdb_loop(void)
@@ -260,14 +267,171 @@ static void r0gdb_loop(void)
         __atomic_exchange_n(&in_signal_handler, 0, __ATOMIC_RELEASE);
         ts.regs.eflags &= ~0x200;
         ts.regs.eflags |= 0x102;
+        if((void*)ts.regs.rip == (void*)r0gdb_exit)
+            break;
         run_in_kernel(&ts.regs);
     }
 }
 
 void r0gdb(void)
 {
-    r0gdb_setup();
+    r0gdb_setup(1);
     r0gdb_loop();
+}
+
+static uint64_t r0gdb_rdmsr(uint32_t ecx)
+{
+    struct regs regs = {0};
+    regs.rip = kdata_base - 0x9d0cfa;
+    regs.rsp = kstack;
+    regs.rcx = ecx;
+    regs.eflags = 0x102;
+    run_in_kernel(&regs);
+    return regs.rdx << 32 | regs.rax;
+}
+
+static void r0gdb_wrmsr(uint32_t ecx, uint64_t value)
+{
+    struct regs regs = {0};
+    regs.rip = kdata_base - 0x9cf8bb;
+    regs.rsp = kstack;
+    regs.rcx = ecx;
+    regs.rax = value;
+    regs.rdx = value >> 32;
+    regs.eflags = 0x102;
+    run_in_kernel(&regs);
+}
+
+uint64_t trace_base;
+uint64_t trace_start;
+uint64_t trace_end;
+void(*trace_prog)(uint64_t*);
+extern char ret2trace[];
+
+static void r0gdb_trace(size_t trace_size)
+{
+    static int tracing = 0;
+    if(!tracing)
+    {
+        r0gdb_setup(0);
+        r0gdb_wrmsr(0xc0000084, r0gdb_rdmsr(0xc0000084) & -0x101);
+        char* stack = mmap(0, 16384, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+        mlock(stack, 16384);
+        stack[0] = 1;
+        mlock(stack, 16384);
+        uint64_t urf[5] = {(uintptr_t)ret2trace, 0x43, 2, (uintptr_t)stack+16384, 0x3b};
+        copyin(uretframe, urf, sizeof(urf));
+        tracing = 1;
+    }
+    char* tracebuf = 0;
+    if(trace_size)
+        tracebuf = mmap(0, trace_size, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+    mlock(tracebuf, trace_size);
+    for(size_t i = 0; i < trace_size; i += 4096)
+        tracebuf[i] = (uint8_t)i;
+    mlock(tracebuf, trace_size);
+    trace_base = (uint64_t)tracebuf;
+    trace_start = trace_base;
+    trace_end = trace_base + trace_size;
+}
+
+static void r0gdb_trace_reset(void)
+{
+    trace_start = trace_base;
+}
+
+static int r0gdb_trace_send(const char* ipaddr, int port)
+{
+    uint32_t ip = 0;
+    int shift = 0;
+    for(int i = 0; i < 4; i++)
+    {
+        int q = 0;
+        while(*ipaddr >= '0' && *ipaddr <= '9')
+            q = 10 * q + (*ipaddr++) - '0';
+        ipaddr++;
+        ip |= q << shift;
+        shift += 8;
+    }
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock < 0)
+        return -1;
+    struct sockaddr_in conn = {
+        .sin_family = AF_INET,
+        .sin_addr = { .s_addr = ip },
+        .sin_port = port >> 8 | port << 8,
+    };
+    if(connect(sock, (void*)&conn, sizeof(conn)))
+    {
+        close(sock);
+        return -1;
+    }
+    char* p = (char*)trace_base;
+    size_t sz = trace_start - trace_base;
+    while(sz)
+    {
+        ssize_t chk = write(sock, p, sz);
+        if(chk <= 0)
+        {
+            close(sock);
+            return -1;
+        }
+        p += chk;
+        sz -= chk;
+    }
+    close(sock);
+    return 0;
+}
+
+static void clear_tf(int sig, siginfo_t* s, void* o_uc)
+{
+    ucontext_t* uc = (ucontext_t*)o_uc;
+    mcontext_t* mc = (mcontext_t*)(((char*)&uc->uc_mcontext)+48); // wtf??
+    mc->mc_rflags &= -257;
+}
+
+static void r0gdb_instrument(size_t size)
+{
+    static int instrumented = 0;
+    if(instrumented)
+        return;
+    r0gdb_trace(size);
+    struct sigaction sa = {
+        .sa_sigaction = clear_tf,
+        .sa_flags = SA_SIGINFO
+    };
+    sigaction(SIGTRAP, &sa, 0);
+    instrumented = 1;
+}
+
+static void set_trace(void)
+{
+    uint64_t q;
+    asm volatile("pop %0\npushfq\norb $1, 1(%%rsp)\npopfq\npush %0":"=r"(q));
+}
+
+static void fix_mprotect(uint64_t* regs)
+{
+    if(regs[0] == kdata_base - 0x90ac61)
+        regs[0] += 6;
+}
+
+int mprotect20(void* addr, size_t sz, int prot)
+{
+    r0gdb_instrument(0);
+    int(*p_mprotect)(void*, size_t, int) = dlsym((void*)0x2001, "mprotect");
+    trace_prog = fix_mprotect;
+    set_trace();
+    int ans = p_mprotect(addr, sz, prot);
+    p_mprotect = 0;
+}
+
+uint64_t other_thread;
+
+void* other_thread_fn(void*)
+{
+    other_thread = get_thread();
+    ((int(*)())dlsym((void*)0x2001, "sceKernelSleep"))(10000000);
 }
 
 int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
