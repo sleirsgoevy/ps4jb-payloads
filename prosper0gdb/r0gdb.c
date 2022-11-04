@@ -189,7 +189,7 @@ extern int in_signal_handler;
 int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern);
 void run_in_kernel(struct regs*);
 
-static uint64_t kstack;
+uint64_t kstack;
 uint64_t kframe;
 uint64_t uretframe;
 uint64_t iret;
@@ -204,6 +204,8 @@ void r0gdb_setup(int do_swapgs)
         return;
     //mlock all our code & data
     mlock(_start, _end-_start);
+    for(size_t i = 0; i < _end-_start; i += 4096)
+        *(volatile char*)(_start+i);
 #ifdef CPU_2
     //pin ourselves to cpu 2 (13 in apic order)
     char affinity[16] = {4};

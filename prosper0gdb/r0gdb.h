@@ -50,6 +50,7 @@ void* mmap20(void* addr, size_t sz, int prot, int flags, int fd, off_t offset);
 
 /* internals */
 
+extern uint64_t kstack;
 extern uint64_t kframe;
 extern uint64_t uretframe;
 

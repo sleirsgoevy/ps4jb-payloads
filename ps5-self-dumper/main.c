@@ -1,8 +1,13 @@
 #include "../prosper0gdb/r0gdb.h"
+#ifdef DEBUG
 #include "../gdb_stub/dbg.h"
+#endif
 #include <sys/mman.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <dirent.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 struct memfd
 {
@@ -10,6 +15,20 @@ struct memfd
     size_t size;
     size_t capacity;
 };
+
+static int writeall(int fd, const void* buf, size_t sz)
+{
+    const char* p = buf;
+    while(sz)
+    {
+        ssize_t chk = write(fd, p, sz);
+        if(chk <= 0)
+            return -1;
+        sz -= chk;
+        p += chk;
+    }
+    return 0;
+}
 
 void memfd_pwrite(struct memfd* fd, const void* buf, size_t sz, size_t offset)
 {
@@ -51,14 +70,17 @@ void memfd_close(struct memfd* fd)
 
 static void print_string(const char* s)
 {
+#ifdef DEBUG
     size_t l = 0;
     while(s[l])
         l++;
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)s, (uintptr_t)l);
+#endif
 }
 
 static void print_hex(uint64_t i)
 {
+#ifdef DEBUG
     char buf[17] = {0};
     char* p = buf;
     for(int j = 60; j >= 0; j -= 4)
@@ -70,13 +92,7 @@ static void print_hex(uint64_t i)
             *p++ = q - 10 + 'a';
     }
     print_string(buf);
-}
-
-static void anykey(void)
-{
-    print_string("-- Press Enter to continue --");
-    char c;
-    gdb_remote_syscall("read", 1, 0, (uintptr_t)0, (uintptr_t)&c, (uintptr_t)1);
+#endif
 }
 
 struct memfd dump_elf(const char* path)
@@ -149,7 +165,6 @@ struct memfd dump_elf(const char* path)
         print_string(", filesz = ");
         print_hex(filesz);
         print_string("\n");
-        //anykey();
         void* map = mmap20(0, filesz, PROT_READ, MAP_SHARED|0x80000, fd, (uint64_t)i << 32);
         if(map == MAP_FAILED)
         {
@@ -170,9 +185,215 @@ struct memfd dump_elf(const char* path)
     return out;
 }
 
+struct my_dirent
+{
+    uintptr_t path;
+    int is_file;
+};
+
+struct memfd listdirs(struct my_dirent* dirs, int* have_dirs)
+{
+    char* names = (void*)dirs;
+    struct memfd buf1 = {0};
+    struct memfd buf2 = {0};
+    size_t pos1 = 0;
+    size_t pos2 = 0;
+    for(size_t i = 0; dirs[i].path; i++)
+    {
+        size_t l = 0;
+        while(names[dirs[i].path+l])
+            l++;
+        if(dirs[i].is_file)
+        {
+            size_t p = pos1;
+            memfd_pwrite(&buf1, names+dirs[i].path, l+1, pos1);
+            pos1 += l + 1;
+            struct my_dirent new = {
+                .path = p+1,
+                .is_file = 1,
+            };
+            memfd_pwrite(&buf2, &new, sizeof(new), pos2);
+            pos2 += sizeof(new);
+        }
+        else
+        {
+            int fd = open(names+dirs[i].path, O_RDONLY);
+            if(fd < 0)
+                continue;
+            char* de_buf = mmap(0, 16384, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+            int size;
+            while((size = getdents(fd, de_buf, 16384)) > 0)
+                for(int j = 0; j < size;)
+                {
+                    struct dirent* de = (void*)(de_buf+j);
+                    j += de->d_reclen;
+                    if(de->d_namlen <= 2
+                    && (!de->d_namlen || de->d_name[0] == '.')
+                    && (de->d_namlen == 1 || de->d_name[1] == '.'))
+                        continue;
+                    size_t p = pos1;
+                    memfd_pwrite(&buf1, names+dirs[i].path, l, pos1);
+                    pos1 += l;
+                    memfd_pwrite(&buf1, "/", 1, pos1);
+                    pos1++;
+                    memfd_pwrite(&buf1, de->d_name, de->d_namlen, pos1);
+                    pos1 += de->d_namlen;
+                    memfd_pwrite(&buf1, "", 1, pos1);
+                    pos1++;
+                    struct my_dirent new = {
+                        .path = p+1,
+                        .is_file = de->d_type != DT_DIR,
+                    };
+                    memfd_pwrite(&buf2, &new, sizeof(new), pos2);
+                    pos2 += sizeof(new);
+                    if(have_dirs && !new.is_file)
+                        *have_dirs = 1;
+                }
+            munmap(de_buf, 16384);
+            close(fd);
+        }
+    }
+    struct my_dirent sentinel = {0};
+    memfd_pwrite(&buf2, &sentinel, sizeof(sentinel), pos2);
+    pos2 += sizeof(sentinel);
+    memfd_pwrite(&buf2, buf1.buf, buf1.size, pos2);
+    memfd_close(&buf1);
+    struct my_dirent* dirs2 = (void*)buf2.buf;
+    for(size_t i = 0; dirs2[i].path; i++)
+        dirs2[i].path += pos2 - 1;
+    return buf2;
+}
+
+struct memfd tree(const char** paths)
+{
+    size_t npaths = 0;
+    while(paths[npaths])
+        npaths++;
+    size_t pos1 = (npaths + 1) * sizeof(struct my_dirent);
+    size_t pos2 = 0;
+    struct memfd obj = {0};
+    for(size_t i = 0; paths[i]; i++)
+    {
+        size_t p = pos1;
+        size_t l = 0;
+        while(paths[i][l])
+            l++;
+        memfd_pwrite(&obj, paths[i], l+1, pos1);
+        pos1 += l + 1;
+        struct my_dirent entry = {
+            .path = p,
+            .is_file = 0,
+        };
+        memfd_pwrite(&obj, &entry, sizeof(entry), pos2);
+        pos2 += sizeof(entry);
+    }
+    struct my_dirent sentinel = {0};
+    memfd_pwrite(&obj, &sentinel, sizeof(sentinel), pos2);
+    int have_dirs = 1;
+    while(have_dirs)
+    {
+        have_dirs = 0;
+        struct memfd obj2 = listdirs((void*)obj.buf, &have_dirs);
+        memfd_close(&obj);
+        obj = obj2;
+    }
+    return obj;
+}
+
+void dump_dirents(struct my_dirent* dirents, int sock)
+{
+    char* paths = (void*)dirents;
+    for(size_t i = 0; dirents[i].path; i++)
+    {
+        char* path = paths + dirents[i].path;
+        size_t l = 0;
+        while(path[l])
+            l++;
+        static const char suffixes[4][11] = {".self", ".sprx", ".elf", "/eboot.bin"};
+        int ok = 0;
+        for(int i = 0; i < 4 && !ok; i++)
+        {
+            size_t l2 = 0;
+            while(suffixes[i][l2])
+                l2++;
+            if(l2 > l)
+                continue;
+            size_t k = l - l2;
+            ok = 1;
+            for(size_t j = 0; j < l2 && ok; j++)
+                if(path[k+j] != suffixes[i][j])
+                    ok = 0;
+        }
+        if(!ok)
+            continue;
+        struct memfd data = dump_elf(path);
+        if(data.size == 0)
+        {
+            memfd_close(&data);
+            continue;
+        }
+        char tar_header[512] = {0};
+        for(size_t i = 0; i < l && i < 99; i++)
+            tar_header[i] = path[i+1];
+        tar_header[100] = '1';
+        tar_header[101] = '0';
+        tar_header[102] = '0';
+        tar_header[103] = '6';
+        tar_header[104] = '4';
+        tar_header[105] = '4';
+        tar_header[108] = '0';
+        tar_header[116] = '0';
+        char* p = tar_header + 124;
+        for(int i = 30; i >= 0; i -= 3)
+            *p++ = (data.size >> i) % 8 + '0';
+        tar_header[136] = '0';
+        for(int i = 0; i < 8; i++)
+            tar_header[148+i] = ' ';
+        tar_header[156] = '0';
+        uint16_t cksum = 0;
+        for(int i = 0; i < 512; i++)
+            cksum += (uint8_t)tar_header[i];
+        p = tar_header + 148;
+        for(int i = 15; i >= 0; i -= 3)
+            *p++ = (cksum >> i) % 8 + '0';
+        *p++ = 0;
+        writeall(sock, tar_header, 512);
+        writeall(sock, data.buf, (data.size + 511) & -512);
+        memfd_close(&data);
+    }
+    char tar_end[1024] = {0};
+    writeall(sock, tar_end, 1024);
+}
+
 int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
     r0gdb_init(ds, a, b, c, d);
+#ifdef DEBUG
     dbg_enter();
+#endif
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock < 0)
+        return 1;
+    struct sockaddr_in addr = {
+        .sin_family = 2,
+        .sin_addr = {0},
+        .sin_port = 0x3f23, // ntohs(9023)
+    };
+    if(bind(sock, (void*)&addr, sizeof(addr))
+    || listen(sock, 1))
+    {
+        close(sock);
+        return 1;
+    }
+    int sock2 = accept(sock, 0, 0);
+    if(sock2 < 0)
+    {
+        close(sock);
+        return 1;
+    }
+    const char* paths[3] = {"/system", "/system_ex", 0};
+    struct memfd buf = tree(paths);
+    dump_dirents((void*)buf.buf, sock2);
+    close(sock2);
     return 0;
 }

@@ -1,7 +1,6 @@
 #include "../gdb_stub/dbg.h"
+#include "r0gdb.h"
 #include <stdint.h>
-
-void r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d);
 
 int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
