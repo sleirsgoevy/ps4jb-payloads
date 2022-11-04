@@ -192,12 +192,18 @@ void run_in_kernel(struct regs*);
 static uint64_t kstack;
 uint64_t kframe;
 uint64_t uretframe;
+uint64_t iret;
+
+extern char _start[];
+extern char _end[];
 
 void r0gdb_setup(int do_swapgs)
 {
     static int init_run = 0;
     if(init_run)
         return;
+    //mlock all our code & data
+    mlock(_start, _end-_start);
 #ifdef CPU_2
     //pin ourselves to cpu 2 (13 in apic order)
     char affinity[16] = {4};
@@ -207,7 +213,7 @@ void r0gdb_setup(int do_swapgs)
     uint64_t gdt = kdata_base + 0x64cee30;
     uint64_t idt = kdata_base + 0x64cdc80;
     uint64_t tss = kdata_base + 0x64d0830;
-    volatile uint64_t iret = kdata_base - 0x9cf84c;
+    iret = kdata_base - 0x9cf84c;
     volatile uint64_t add_rsp_0xe8_iret = iret - 7;
     volatile uint64_t swapgs_add_rsp_0xe8_iret = iret - 10;
     uint64_t memcpy_addr = kdata_base - 0x990a55;
@@ -436,10 +442,10 @@ static uint64_t* jprog = 0;
 
 static void do_jprog(uint64_t* regs)
 {
-    for(int i = 0; jprog[i]; i += 2)
+    for(int i = 0; jprog[i]; i += 3)
         if(regs[0] == jprog[i])
         {
-            regs[0] = jprog[i+1];
+            regs[jprog[i+1]] = jprog[i+2];
             break;
         }
 }
@@ -461,9 +467,27 @@ int mprotect20(void* addr, size_t sz, int prot)
     return ans;
 }
 
+void kmemcpy(void* dst, const void* src, size_t sz);
+
+static void untrace_fn(uint64_t* regs)
+{
+    uint64_t rsp = regs[3];
+    uint64_t lr;
+    kmemcpy(&lr, (void*)rsp, 8);
+    uint64_t frame[6] = {iret, lr, 0x20, regs[2], rsp+8, 0};
+    rsp -= 0x30;
+    kmemcpy((void*)rsp, frame, 48);
+    regs[3] = rsp;
+    regs[2] &= -257;
+}
+
 static void fix_mmap_self(uint64_t* regs)
 {
-    if(regs[0] == kdata_base - 0x1df2ce)
+    if(regs[0] == kdata_base - 0x616700
+    || regs[0] == kdata_base - 0x615c30
+    || regs[0] == kdata_base - 0x798420)
+        untrace_fn(regs);
+    else if(regs[0] == kdata_base - 0x1df2ce)
     {
         regs[0] += 2;
         regs[2] &= -257;
