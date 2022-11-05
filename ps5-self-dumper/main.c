@@ -391,7 +391,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         close(sock);
         return 1;
     }
-    const char* paths[3] = {"/system", "/system_ex", 0};
+    const char* paths[3] = {"/system_ex", "/system", 0};
     struct memfd buf = tree(paths);
     dump_dirents((void*)buf.buf, sock2);
     close(sock2);
