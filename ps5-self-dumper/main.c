@@ -274,15 +274,22 @@ struct memfd tree(const char** paths)
     struct memfd obj = {0};
     for(size_t i = 0; paths[i]; i++)
     {
+        const char* cur = paths[i];
+        int is_file = 0;
+        if(cur[0] == '!')
+        {
+            cur++;
+            is_file = 1;
+        }
         size_t p = pos1;
         size_t l = 0;
-        while(paths[i][l])
+        while(cur[l])
             l++;
-        memfd_pwrite(&obj, paths[i], l+1, pos1);
+        memfd_pwrite(&obj, cur, l+1, pos1);
         pos1 += l + 1;
         struct my_dirent entry = {
             .path = p,
-            .is_file = 0,
+            .is_file = is_file,
         };
         memfd_pwrite(&obj, &entry, sizeof(entry), pos2);
         pos2 += sizeof(entry);
@@ -391,7 +398,17 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         close(sock);
         return 1;
     }
-    const char* paths[3] = {"/system_ex", "/system", 0};
+    const char* paths[] = {
+        "/system_ex",
+        "!/decid_update.elf",
+        "!/first_img_writer.elf",
+        "!/mini-syscore.elf",
+        "!/safemode.elf",
+        "!/SceSysAvControl.elf",
+        "!/setipaddr.elf",
+        "/system",
+        0
+    };
     struct memfd buf = tree(paths);
     dump_dirents((void*)buf.buf, sock2);
     close(sock2);
