@@ -8,6 +8,7 @@ p/x $iret = kdata_base - 0x9cf84c
 p/x $pcpu13 = kdata_base + 0x64d9780
 p/x $lstar = kdata_base - 0x96bed8
 p/x $syscalls = kdata_base + 0x1709c0
+p/x $sysentvec = kdata_base + 0xd11bb8
 p/x $int244 = kdata_base - 0x96be70
 p/x $popctx_iret = $iret - 0x5f
 p/x $rdmsr = kdata_base - 0x9d0cfa
