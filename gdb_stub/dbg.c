@@ -929,6 +929,10 @@ void start_interrupter_thread(void)
 
 #endif
 
+#ifdef __PS4__
+static mcontext_t* p_mcontext;
+#endif
+
 static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
 {
     while(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE));
@@ -938,6 +942,7 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
     sysarch(AMD64_SET_GSBASE, &mc->mc_gsbase);
     if(signum == SIGTRAP && idc->si_code == TRAP_BRKPT)
         mc->mc_rip--;
+    p_mcontext = mc;
 #else
     if(signum == SIGTRAP && idc->si_code == 3)
         uc->uc_mcontext.gregs[REG_RIP]--;
