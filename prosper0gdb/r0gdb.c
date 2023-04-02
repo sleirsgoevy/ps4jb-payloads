@@ -1,5 +1,6 @@
 #include "../gdb_stub/dbg.h"
 #include "../gdb_stub/trap_state.h"
+#include <stdarg.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -15,7 +16,7 @@
 #include <netinet/ip6.h>
 #include "r0gdb.h"
 
-#define CPU_2 //TODO: run on any cpu
+//#define CPU_2 //TODO: run on any cpu
 
 static int master_fd;
 static int victim_fd;
@@ -197,6 +198,20 @@ uint64_t iret;
 extern char _start[];
 extern char _end[];
 
+static int bind_to_some_cpu(void)
+{
+    uint8_t affinity[16] = {0};
+    cpuset_getaffinity(3, 1, *((int*(*)())dlsym((void*)0x2001, "pthread_self"))(), 16, (void*)affinity);
+    int i = 0;
+    while(i < 16 && !affinity[i])
+        i++;
+    affinity[i] &= (affinity[i] ^ (affinity[i] - 1));
+    i++;
+    while(i < 16)
+        affinity[i++] = 0;
+    return cpuset_setaffinity(3, 1, *((int*(*)())dlsym((void*)0x2001, "pthread_self"))(), 16, (void*)affinity);
+}
+
 void r0gdb_setup(int do_swapgs)
 {
     static int init_run = 0;
@@ -335,6 +350,7 @@ void r0gdb_trace(size_t trace_size)
     if(!tracing)
     {
         r0gdb_setup(0);
+        bind_to_some_cpu();
         r0gdb_wrmsr(0xc0000084, r0gdb_rdmsr(0xc0000084) & -0x101);
         char* stack = mmap(0, 16384, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
         mlock(stack, 16384);
@@ -474,9 +490,8 @@ void kmemcpy(void* dst, const void* src, size_t sz);
 static void untrace_fn(uint64_t* regs)
 {
     uint64_t rsp = regs[3];
-    uint64_t lr;
-    kmemcpy(&lr, (void*)rsp, 8);
-    uint64_t frame[6] = {iret, lr, 0x20, regs[2], rsp+8, 0};
+    uint64_t ret_gadget = kdata_base - 0x28a3a0;
+    uint64_t frame[6] = {iret, ret_gadget, 0x20, regs[2], rsp, 0};
     rsp -= 0x30;
     kmemcpy((void*)rsp, frame, 48);
     regs[3] = rsp;
@@ -505,6 +520,52 @@ void* mmap20(void* addr, size_t sz, int prot, int flags, int fd, off_t offset)
     void* ans = p_mmap(addr, sz, prot, flags, fd, offset);
     trace_prog = 0;
     return ans;
+}
+
+static uint64_t fncall_fn = 0;
+static uint64_t fncall_args[6];
+static uint64_t fncall_ans = 0;
+
+static void getpid_to_fncall(uint64_t* regs)
+{
+    if(regs[0] == kdata_base - 0x967e88)
+    {
+        regs[0] = fncall_fn;
+        regs[12] = fncall_args[0];
+        regs[11] = fncall_args[1];
+        regs[7] = fncall_args[2];
+        regs[6] = fncall_args[3];
+        regs[13] = fncall_args[4];
+        regs[14] = fncall_args[5];
+        untrace_fn(regs);
+    }
+    else if(regs[0] == kdata_base - 0x8022ee)
+    {
+        fncall_ans = regs[5];
+        regs[5] = 0;
+        regs[2] &= -257;
+    }
+}
+
+uint64_t r0gdb_kfncall(uint64_t fn, ...)
+{
+    va_list args;
+    va_start(args, fn);
+    for(int i = 0; i < 6; i++)
+        fncall_args[i] = va_arg(args, uint64_t);
+    va_end(args);
+    fncall_fn = fn;
+    r0gdb_instrument(0);
+    void(*p_getpid)(void) = (void*)dlsym((void*)0x2001, "getpid");
+    trace_prog = getpid_to_fncall;
+    set_trace();
+    p_getpid();
+    return fncall_ans;
+}
+
+uint64_t r0gdb_kmalloc(size_t sz)
+{
+    return r0gdb_kfncall(kdata_base - 0xa9b00, sz, kdata_base + 0x1346080, 1);
 }
 
 static uint64_t other_thread;

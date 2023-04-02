@@ -5,8 +5,9 @@ p/x $idt = kdata_base + 0x64cdc80
 p/x $tss = kdata_base + 0x64d0830
 p/x $tss13 = $tss + 13 * 0x68
 p/x $iret = kdata_base - 0x9cf84c
+p/x $ret = kdata_base - 0x28a3a0
 p/x $pcpu13 = kdata_base + 0x64d9780
-p/x $lstar = kdata_base - 0x96bed8
+p/x $lstar = kdata_base - 0x96bde8
 p/x $syscalls = kdata_base + 0x1709c0
 p/x $sysentvec = kdata_base + 0xd11bb8
 p/x $int244 = kdata_base - 0x96be70
@@ -14,3 +15,6 @@ p/x $popctx_iret = $iret - 0x5f
 p/x $rdmsr = kdata_base - 0x9d0cfa
 p/x $wrmsr = kdata_base - 0x9cf8bb
 p/x $rep_movsb_pop_rbp_ret = kdata_base - 0x990a55
+
+p/x $malloc = kdata_base - 0xa9b00
+p/x $M_something = kdata_base + 0x1346080

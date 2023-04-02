@@ -48,6 +48,12 @@ int mprotect20(void* addr, size_t sz, int prot);
 //mmap with map_self
 void* mmap20(void* addr, size_t sz, int prot, int flags, int fd, off_t offset);
 
+//kernel function call
+uint64_t r0gdb_kfncall(uint64_t kfn, ...);
+
+//kernel malloc via function call
+uint64_t r0gdb_kmalloc(size_t sz);
+
 /* internals */
 
 extern uint64_t kstack;
