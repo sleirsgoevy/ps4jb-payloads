@@ -377,7 +377,7 @@ void r0gdb_trace_reset(void)
     trace_start = trace_base;
 }
 
-int r0gdb_trace_send(const char* ipaddr, int port)
+int r0gdb_open_socket(const char* ipaddr, int port)
 {
     uint32_t ip = 0;
     int shift = 0;
@@ -403,6 +403,14 @@ int r0gdb_trace_send(const char* ipaddr, int port)
         close(sock);
         return -1;
     }
+    return sock;
+}
+
+int r0gdb_trace_send(const char* ipaddr, int port)
+{
+    int sock = r0gdb_open_socket(ipaddr, port);
+    if(sock < 0)
+        return -1;
     char* p = (char*)trace_base;
     size_t sz = trace_start - trace_base;
     while(sz)
@@ -458,8 +466,29 @@ static void eat_count(uint64_t* regs)
 
 static uint64_t* jprog = 0;
 
+void kmemcpy(void* dst, const void* src, size_t sz);
+
+static void untrace_fn(uint64_t* regs)
+{
+    uint64_t rsp = regs[3];
+    uint64_t ret_gadget = kdata_base - 0x28a3a0;
+    uint64_t frame[6] = {iret, ret_gadget, 0x20, regs[2], rsp, 0};
+    rsp -= 0x30;
+    kmemcpy((void*)rsp, frame, 48);
+    regs[3] = rsp;
+    regs[2] &= -257;
+}
+
+#define SKIP_SCHEDULER\
+    if(regs[0] == kdata_base - 0x9d6f80)\
+    {\
+        untrace_fn(regs);\
+        return;\
+    }
+
 static void do_jprog(uint64_t* regs)
 {
+    SKIP_SCHEDULER
     for(int i = 0; jprog[i]; i += 3)
         if(regs[0] == jprog[i])
         {
@@ -470,6 +499,7 @@ static void do_jprog(uint64_t* regs)
 
 static void fix_mprotect(uint64_t* regs)
 {
+    SKIP_SCHEDULER
     if(regs[0] == kdata_base - 0x90ac61)
         regs[0] += 6;
 }
@@ -485,21 +515,9 @@ int mprotect20(void* addr, size_t sz, int prot)
     return ans;
 }
 
-void kmemcpy(void* dst, const void* src, size_t sz);
-
-static void untrace_fn(uint64_t* regs)
-{
-    uint64_t rsp = regs[3];
-    uint64_t ret_gadget = kdata_base - 0x28a3a0;
-    uint64_t frame[6] = {iret, ret_gadget, 0x20, regs[2], rsp, 0};
-    rsp -= 0x30;
-    kmemcpy((void*)rsp, frame, 48);
-    regs[3] = rsp;
-    regs[2] &= -257;
-}
-
 static void fix_mmap_self(uint64_t* regs)
 {
+    SKIP_SCHEDULER
     if(regs[0] == kdata_base - 0x616700
     || regs[0] == kdata_base - 0x615c30
     || regs[0] == kdata_base - 0x798420)
@@ -528,6 +546,7 @@ static uint64_t fncall_ans = 0;
 
 static void getpid_to_fncall(uint64_t* regs)
 {
+    SKIP_SCHEDULER
     if(regs[0] == kdata_base - 0x967e88)
     {
         regs[0] = fncall_fn;
@@ -565,7 +584,59 @@ uint64_t r0gdb_kfncall(uint64_t fn, ...)
 
 uint64_t r0gdb_kmalloc(size_t sz)
 {
-    return r0gdb_kfncall(kdata_base - 0xa9b00, sz, kdata_base + 0x1346080, 1);
+    return r0gdb_kfncall(kdata_base - 0xa9b00, sz, kdata_base + 0x1346080, 2 /* M_WAITOK */);
+}
+
+static uint64_t instr_start;
+static int instrs_left;
+
+static void instr_count(uint64_t* regs)
+{
+    SKIP_SCHEDULER
+    if(regs[0] == instr_start)
+        instr_start = 0;
+    else if(!instr_start)
+    {
+        if(!instrs_left)
+            regs[2] &= -257;
+        else
+            instrs_left--;
+    }
+}
+
+static int count_instrs(void(*fn)(), uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t entry, int instrs)
+{
+    r0gdb_trace_reset();
+    trace_prog = instr_count;
+    instr_start = entry;
+    instrs_left = instrs;
+    set_trace();
+    fn(arg1, arg2, arg3);
+    return (trace_start-trace_base)/168;
+}
+
+static uint64_t get_last_pc(void)
+{
+    return ((uint64_t*)trace_start)[-21];
+}
+
+static uint64_t get_last_unique(void)
+{
+    uint64_t* start = (uint64_t*)trace_base;
+    uint64_t* end = (uint64_t*)trace_start;
+    uint64_t ans = start[0];
+    for(uint64_t* i = start; i < end; i += 21)
+    {
+        uint64_t cur = i[0];
+        for(uint64_t* j = start; j < i; j += 21)
+            if(cur == j[0])
+            {
+                cur = ans;
+                break;
+            }
+        ans = cur;
+    }
+    return ans;
 }
 
 static uint64_t other_thread;
@@ -573,7 +644,9 @@ static uint64_t other_thread;
 static void* other_thread_fn(void*)
 {
     other_thread = get_thread();
-    ((int(*)())dlsym((void*)0x2001, "sceKernelSleep"))(10000000);
+    //((int(*)())dlsym((void*)0x2001, "sceKernelSleep"))(10000000);
+    for(;;)
+        asm volatile("");
 }
 
 void r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d)

@@ -8,6 +8,7 @@
 #include <dirent.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <signal.h>
 
 struct memfd
 {
@@ -95,7 +96,7 @@ static void print_hex(uint64_t i)
 #endif
 }
 
-struct memfd dump_elf(const char* path)
+struct memfd do_dump_elf(const char* path)
 {
     print_string("dumping ");
     print_string(path);
@@ -183,6 +184,50 @@ struct memfd dump_elf(const char* path)
     munmap(map, size);
     close(fd);
     return out;
+}
+
+struct memfd dump_elf(const char* path)
+{
+    if(path[0] != '/' || path[1] != 's' || path[2] != 'y' || path[3] != 's' || path[4] != 't' || path[5] != 'e' || path[6] != 'm' ||
+    (path[7] != '/' && (path[7] != '_' || path[8] != 'e' || path[9] != 'x' || path[10] != '/')))
+    {
+        print_string("copying ");
+        print_string(path);
+        print_string(" to /data/dump_target.elf\n");
+        int fd1 = open(path, O_RDONLY);
+        int fd2 = open("/data/dump_target.elf", O_WRONLY|O_CREAT|O_TRUNC, 0777);
+        char buf[4096];
+        ssize_t chk;
+        while((chk = read(fd1, buf, 4096)) > 0)
+        {
+            size_t off = 0;
+            while(off < chk)
+            {
+                ssize_t chk2 = write(fd2, buf+off, chk-off);
+                if(chk2 <= 0)
+                {
+                    close(fd1);
+                    close(fd2);
+                    goto copy_failed;
+                }
+                off += chk2;
+            }
+        }
+        close(fd1);
+        close(fd2);
+        if(chk < 0)
+        {
+        copy_failed:
+            print_string("copying ");
+            print_string(path);
+            print_string(" failed\n");
+            return (struct memfd){};
+        }
+        struct memfd ans = do_dump_elf("/data/dump_target.elf");
+        unlink("/data/dump_target.elf");
+        return ans;
+    }
+    return do_dump_elf(path);
 }
 
 struct my_dirent
@@ -412,5 +457,6 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     struct memfd buf = tree(paths);
     dump_dirents((void*)buf.buf, sock2);
     close(sock2);
+    kill(getpid(), SIGKILL);
     return 0;
 }

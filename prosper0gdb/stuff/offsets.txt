@@ -18,3 +18,4 @@ p/x $rep_movsb_pop_rbp_ret = kdata_base - 0x990a55
 
 p/x $malloc = kdata_base - 0xa9b00
 p/x $M_something = kdata_base + 0x1346080
+p/x $cpu_switch = kdata_base - 0x9d6f80
