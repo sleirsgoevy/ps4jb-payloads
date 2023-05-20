@@ -518,15 +518,14 @@ int mprotect20(void* addr, size_t sz, int prot)
 static void fix_mmap_self(uint64_t* regs)
 {
     SKIP_SCHEDULER
-    if(regs[0] == kdata_base - 0x616700
+    /*if(regs[0] == kdata_base - 0x616700
     || regs[0] == kdata_base - 0x615c30
     || regs[0] == kdata_base - 0x798420)
         untrace_fn(regs);
-    else if(regs[0] == kdata_base - 0x1df2ce)
-    {
+    else*/ if(regs[0] == kdata_base - 0x2cd31d)
         regs[0] += 2;
-        regs[2] &= -257;
-    }
+    else if(regs[0] == kdata_base - 0x1df2ce)
+        regs[0] += 2;
 }
 
 void* mmap20(void* addr, size_t sz, int prot, int flags, int fd, off_t offset)

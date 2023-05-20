@@ -9,6 +9,29 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <signal.h>
+#include <ucontext.h>
+
+asm("segv_memcpy:\nmov %rdx,%rcx\nsegv_memcpy_fault:\nrep movsb\nxor %eax, %eax\nret");
+
+int segv_memcpy(void* dst, const void* src, size_t sz);
+extern char segv_memcpy_fault[];
+
+static void(*old_sigsegv_handler)(int, siginfo_t*, void*);
+
+static void memcpy_segv_handler(int sig, siginfo_t* idc, void* o_uc)
+{
+    ucontext_t* uc = o_uc;
+    mcontext_t* mc = (mcontext_t*)(((char*)&uc->uc_mcontext)+48); // wtf??
+    if(mc->mc_rip == (uint64_t)segv_memcpy_fault)
+    {
+        uint64_t* rsp = (uint64_t*)mc->mc_rsp;
+        mc->mc_rip = *rsp++;
+        mc->mc_rsp = (uint64_t)rsp;
+        mc->mc_rax = -1;
+        return;
+    }
+    old_sigsegv_handler(sig, idc, o_uc);
+}
 
 struct memfd
 {
@@ -31,7 +54,7 @@ static int writeall(int fd, const void* buf, size_t sz)
     return 0;
 }
 
-void memfd_pwrite(struct memfd* fd, const void* buf, size_t sz, size_t offset)
+int memfd_pwrite(struct memfd* fd, const void* buf, size_t sz, size_t offset)
 {
     size_t cap2 = fd->capacity;
     while(offset + sz > cap2)
@@ -55,10 +78,11 @@ void memfd_pwrite(struct memfd* fd, const void* buf, size_t sz, size_t offset)
         fd->capacity = cap2;
     }
     const char* p_in = buf;
-    for(size_t i = 0; i < sz; i++)
-        fd->buf[i+offset] = p_in[i];
+    if(segv_memcpy(fd->buf+offset, p_in, sz))
+        return -1;
     if(offset + sz > fd->size)
         fd->size = offset + sz;
+    return 0;
 }
 
 void memfd_close(struct memfd* fd)
@@ -96,7 +120,7 @@ static void print_hex(uint64_t i)
 #endif
 }
 
-struct memfd do_dump_elf(const char* path)
+struct memfd dump_elf(const char* path)
 {
     print_string("dumping ");
     print_string(path);
@@ -171,63 +195,25 @@ struct memfd do_dump_elf(const char* path)
         {
             print_string("failed to mmap segment\n");
             memfd_close(&out);
-            munmap(map, size);
             close(fd);
             return out;
         }
         print_string("map = ");
         print_hex((uint64_t)map);
         print_string("\n");
-        memfd_pwrite(&out, map, filesz, offset);
+        if(memfd_pwrite(&out, map, filesz, offset))
+        {
+            print_string("got SIGSEGV while copying segment, aborting\n");
+            memfd_close(&out);
+            munmap(map, size);
+            close(fd);
+            return out;
+        }
         munmap(map, filesz);
     }
     munmap(map, size);
     close(fd);
     return out;
-}
-
-struct memfd dump_elf(const char* path)
-{
-    if(path[0] != '/' || path[1] != 's' || path[2] != 'y' || path[3] != 's' || path[4] != 't' || path[5] != 'e' || path[6] != 'm' ||
-    (path[7] != '/' && (path[7] != '_' || path[8] != 'e' || path[9] != 'x' || path[10] != '/')))
-    {
-        print_string("copying ");
-        print_string(path);
-        print_string(" to /data/dump_target.elf\n");
-        int fd1 = open(path, O_RDONLY);
-        int fd2 = open("/data/dump_target.elf", O_WRONLY|O_CREAT|O_TRUNC, 0777);
-        char buf[4096];
-        ssize_t chk;
-        while((chk = read(fd1, buf, 4096)) > 0)
-        {
-            size_t off = 0;
-            while(off < chk)
-            {
-                ssize_t chk2 = write(fd2, buf+off, chk-off);
-                if(chk2 <= 0)
-                {
-                    close(fd1);
-                    close(fd2);
-                    goto copy_failed;
-                }
-                off += chk2;
-            }
-        }
-        close(fd1);
-        close(fd2);
-        if(chk < 0)
-        {
-        copy_failed:
-            print_string("copying ");
-            print_string(path);
-            print_string(" failed\n");
-            return (struct memfd){};
-        }
-        struct memfd ans = do_dump_elf("/data/dump_target.elf");
-        unlink("/data/dump_target.elf");
-        return ans;
-    }
-    return do_dump_elf(path);
 }
 
 struct my_dirent
@@ -379,14 +365,19 @@ void dump_dirents(struct my_dirent* dirents, int sock)
         if(!ok)
             continue;
         struct memfd data = dump_elf(path);
-        if(data.size == 0)
-        {
-            memfd_close(&data);
-            continue;
-        }
         char tar_header[512] = {0};
-        for(size_t i = 0; i < l && i < 99; i++)
-            tar_header[i] = path[i+1];
+        {
+            size_t i;
+            for(i = 0; i < l && i < 99; i++)
+                tar_header[i] = path[i+1];
+            if(data.size == 0)
+            {
+                i--;
+                const char* src = ".failed";
+                for(size_t j = 0; src[j] && i < 99; i++, j++)
+                    tar_header[i] = src[j];
+            }
+        }
         tar_header[100] = '1';
         tar_header[101] = '0';
         tar_header[102] = '0';
@@ -423,6 +414,13 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 #ifdef DEBUG
     dbg_enter();
 #endif
+    struct sigaction sa = {
+        .sa_sigaction = memcpy_segv_handler,
+        .sa_flags = SA_SIGINFO,
+    };
+    struct sigaction oldsa;
+    sigaction(SIGSEGV, &sa, &oldsa);
+    old_sigsegv_handler = oldsa.sa_sigaction;
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if(sock < 0)
         return 1;
