@@ -492,3 +492,4 @@ pthread_kill pthread_kill
 sceKernelLoadStartModule sceKernelLoadStartModule
 __error __error
 pthread_detach pthread_detach
+rfork_thread rfork_thread
