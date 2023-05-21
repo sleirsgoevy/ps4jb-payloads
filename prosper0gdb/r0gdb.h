@@ -48,6 +48,10 @@ int mprotect20(void* addr, size_t sz, int prot);
 //mmap with map_self
 void* mmap20(void* addr, size_t sz, int prot, int flags, int fd, off_t offset);
 
+//sigaction with sigstop/sigkill
+struct sigaction;
+int sigaction20(int sig, const struct sigaction* neww, struct sigaction* oldd);
+
 //kernel function call
 uint64_t r0gdb_kfncall(uint64_t kfn, ...);
 

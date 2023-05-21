@@ -10,6 +10,7 @@
 #include <sys/ptrace.h>
 #include <sys/ucontext.h>
 #include <sys/cpuset.h>
+#include <sys/syscall.h>
 #include <machine/sysarch.h>
 #include <signal.h>
 #include <netinet/in.h>
@@ -535,6 +536,35 @@ void* mmap20(void* addr, size_t sz, int prot, int flags, int fd, off_t offset)
     trace_prog = fix_mmap_self;
     set_trace();
     void* ans = p_mmap(addr, sz, prot, flags, fd, offset);
+    trace_prog = 0;
+    return ans;
+}
+
+static uint64_t sys_write;
+static uint64_t sys_sigaction;
+
+static void fix_sigaction_17_9(uint64_t* regs)
+{
+    SKIP_SCHEDULER
+    if(regs[0] == sys_write)
+        regs[0] = sys_sigaction;
+    else if(regs[0] == kdata_base - 0x6c2989)
+        regs[0] = kdata_base - 0x6c2933;
+}
+
+int sigaction20(int sig, const struct sigaction* neww, struct sigaction* oldd)
+{
+    if(sig != SIGKILL && sig != SIGSTOP)
+        return sigaction(sig, neww, oldd);
+    r0gdb_instrument(0);
+    int(*p_write)(int, const void*, void*) = dlsym((void*)0x2001, "_write");
+    trace_prog = fix_sigaction_17_9;
+    if(!sys_write)
+        kmemcpy(&sys_write, (void*)(kdata_base + 0x1709c0 + 48*SYS_write + 8), 8);
+    if(!sys_sigaction)
+        kmemcpy(&sys_sigaction, (void*)(kdata_base + 0x1709c0 + 48*SYS_sigaction + 8), 8);
+    set_trace();
+    int ans = p_write(sig, neww, oldd);
     trace_prog = 0;
     return ans;
 }
