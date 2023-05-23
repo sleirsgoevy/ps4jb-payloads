@@ -19,3 +19,22 @@ p/x $rep_movsb_pop_rbp_ret = kdata_base - 0x990a55
 p/x $malloc = kdata_base - 0xa9b00
 p/x $M_something = kdata_base + 0x1346080
 p/x $cpu_switch = kdata_base - 0x9d6f80
+
+# mailbox
+p/x $sceSblServiceMailbox = kdata_base - 0x6824c0
+
+# mailbox calls
+p/x $sceSblAuthMgrSmFinalize = kdata_base - 0x8a5d40
+p/x $sceSblAuthMgrSmFinalize_call_mailbox = kdata_base - 0x8a5cc3
+
+p/x $authmgr_verifyHeader = kdata_base - 0x8a5a40
+p/x $authmgr_verifyHeader_call_mailbox = kdata_base - 0x8a58c1
+
+p/x $sceSblAuthMgrIsLoadable2 = kdata_base - 0x8a5c40
+p/x $sceSblAuthMgrIsLoadable2_call_mailbox = kdata_base - 0x8a5b27
+
+p/x $authmgr_loadSelfSegment = kdata_base - 0x8a5780
+p/x $authmgr_loadSelfSegment_call_mailbox = kdata_base - 0x8a5546
+
+p/x $authmgr_decryptSelfBlock = kdata_base - 0x8a5410
+p/x $authmgr_decryptSelfBlock_call_mailbox = kdata_base - 0x8a5019

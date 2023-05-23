@@ -339,6 +339,7 @@ void r0gdb_wrmsr(uint32_t ecx, uint64_t value)
     run_in_kernel(&regs);
 }
 
+uint64_t trace_frame_size = 168;
 uint64_t trace_base;
 uint64_t trace_start;
 uint64_t trace_end;
@@ -493,9 +494,78 @@ static void do_jprog(uint64_t* regs)
     for(int i = 0; jprog[i]; i += 3)
         if(regs[0] == jprog[i])
         {
-            regs[jprog[i+1]] = jprog[i+2];
+            if(jprog[i+1] < 21)
+                regs[jprog[i+1]] = jprog[i+2];
+            else if(jprog[i+1] == 21)
+            {
+                uint64_t lr;
+                kmemcpy(&lr, (void*)regs[3], 8);
+                regs[0] = lr;
+                regs[3] += 8;
+                regs[5] = jprog[i+2];
+            }
             break;
         }
+}
+
+static uint64_t* call_trace_base;
+static uint64_t* call_trace_start;
+static uint64_t* call_trace_end;
+
+static void trace_calls(uint64_t* regs)
+{
+    static uint64_t prev_rip = 0;
+    static uint64_t prev_rsp = 0;
+    SKIP_SCHEDULER
+    int call = 0;
+    if(regs[0] - prev_rip >= 16)
+    {
+        if(regs[3] == prev_rsp - 8)
+            call = 1;
+        else if(regs[3] == prev_rsp + 8)
+            call = 2;
+    }
+    if(call)
+    {
+        uint64_t frame[3];
+        if(call == 1)
+        {
+            frame[0] = prev_rip;
+            frame[1] = regs[0];
+            frame[2] = regs[3];
+        }
+        else if(call == 2)
+        {
+            frame[0] = regs[0];
+            frame[1] = 0;
+            frame[2] = prev_rsp;
+        }
+        if(call_trace_end - call_trace_start >= 3)
+        {
+            *call_trace_start++ = frame[0];
+            *call_trace_start++ = frame[1];
+            *call_trace_start++ = frame[2];
+        }
+    }
+    prev_rip = regs[0];
+    prev_rsp = regs[3];
+}
+
+static void start_call_trace(void)
+{
+    call_trace_base = (uint64_t*)trace_base;
+    call_trace_start = (uint64_t*)trace_start;
+    call_trace_end = (uint64_t*)trace_end;
+    trace_base = trace_start = trace_end = 0;
+    trace_prog = trace_calls;
+}
+
+static void end_call_trace(void)
+{
+    trace_base = (uint64_t)call_trace_base;
+    trace_start = (uint64_t)call_trace_start;
+    trace_end = (uint64_t)call_trace_end;
+    call_trace_base = call_trace_start = call_trace_end = 0;
 }
 
 static void fix_mprotect(uint64_t* regs)
@@ -666,6 +736,23 @@ static uint64_t get_last_unique(void)
         ans = cur;
     }
     return ans;
+}
+
+static void filter_sm_service(uint64_t* regs)
+{
+    SKIP_SCHEDULER
+    /*for(size_t i = 5; i < 21; i++)
+        if(regs[i] == kdata_base + 0x3cf169)
+            instrs_left = 100000;*/
+    if(regs[0] == kdata_base - 0x6824c0) //sceSblServiceMailbox
+    {
+        kmemcpy(regs+15, (void*)regs[3], 8);
+        instrs_left = 100000;
+    }
+    if(instrs_left)
+        instrs_left--;
+    else
+        trace_start -= trace_frame_size;
 }
 
 static uint64_t other_thread;

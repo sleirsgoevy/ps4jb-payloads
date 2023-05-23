@@ -10,6 +10,7 @@ extern uretframe
 extern trace_start
 extern trace_end
 extern trace_prog
+extern trace_frame_size
 
 run_in_kernel:
 push rax
@@ -112,6 +113,9 @@ mov rsi, [rel kframe]
 mov rdx, 40
 call kmemcpy
 mov rcx, 168
+mov rax, [rel trace_frame_size]
+cmp rax, rcx
+cmovb rcx, rax
 mov rax, [rel trace_end]
 sub rax, [rel trace_start]
 cmp rax, rcx
