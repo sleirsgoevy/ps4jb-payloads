@@ -409,9 +409,9 @@ void dump_dirents(struct my_dirent* dirents, int sock)
         size_t l = 0;
         while(path[l])
             l++;
-        static const char suffixes[4][11] = {".self", ".sprx", ".elf", "/eboot.bin"};
+        static const char suffixes[5][11] = {".self", ".sprx", ".elf", ".prx", "/eboot.bin"};
         int ok = 0;
-        for(int i = 0; i < 4 && !ok; i++)
+        for(int i = 0; i < 5 && !ok; i++)
         {
             size_t l2 = 0;
             while(suffixes[i][l2])
