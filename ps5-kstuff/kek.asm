@@ -12,6 +12,8 @@ extern add_rsp_iret
 extern dr2gpr_start
 extern dr2gpr_end
 extern scratchpad
+extern copyin
+extern copyout
 
 %include "structs.inc"
 
@@ -102,7 +104,7 @@ rmemcpy0 (%1), (%2), (%3), pop_all_except_rdi_iret
 ; pokeq0 dest, value, retaddr
 %macro pokeq0 3
 memcpy0 (%1), %%value, 8, (%3)
-section .data
+section .data.qword
 %%value:
 dq (%2)
 section .text
@@ -111,7 +113,7 @@ section .text
 ; pokeq dest, value
 %macro pokeq 2
 memcpy (%1), %%value, 8
-section .data
+section .data.qword
 %%value:
 dq (%2)
 section .text
@@ -132,6 +134,13 @@ ptr_add_imm %%poke+iret_rdi, (%1), (%2)
 memcpy 0, (%3), (%4)
 %endmacro
 
+; memcpy_from_offset dest, p_src, offset, size
+%macro memcpy_from_offset 4
+ptr_add_imm %%peek+iret_rsi, (%2), (%3)
+%%peek:
+memcpy (%1), 0, (%4)
+%endmacro
+
 ; cmpb ptr1, ptr2, is_less, is_equal, is_greater
 %macro cmpb 5
 memcpy %%poke1+iret_rsi+1, (%1), 1
@@ -146,7 +155,7 @@ dq 0x20
 dq 2
 dq 0
 dq 0
-section .data
+section .data.qword
 align 256
 %%jump_table:
 dq (%3)
@@ -197,10 +206,28 @@ cmpdbe (%1), (%2), (%3), %%next_check, (%5)
 cmpdbe (%1)+4, (%2)+4, (%3), (%4), (%5)
 %endmacro
 
+; cmpdi ptr1, imm, is_less, is_equal, is_greater
+%macro cmpdi 5
+cmpd (%1), %%value, (%3), (%4), (%5)
+section .data.dword
+%%value:
+dd (%2)
+section .text
+%endmacro
+
+; cmpdibe ptr1, imm, is_less, is_equal, is_greater
+%macro cmpdibe 5
+cmpdbe (%1), %%value, (%3), (%4), (%5)
+section .data.dword
+%%value:
+dd (%2)
+section .text
+%endmacro
+
 ; cmpqi ptr1, imm, is_less, is_equal, is_greater
 %macro cmpqi 5
 cmpq (%1), %%value, (%3), (%4), (%5)
-section .data
+section .data.qword
 %%value:
 dq (%2)
 section .text
@@ -209,7 +236,7 @@ section .text
 ; cmpqibe ptr1, imm, is_less, is_equal, is_greater
 %macro cmpqibe 5
 cmpqbe (%1), %%value, (%3), (%4), (%5)
-section .data
+section .data.qword
 %%value:
 dq (%2)
 section .text
@@ -255,7 +282,7 @@ cmpw (%1), %%value1, %%skip, %%change, %%skip
 %%change:
 memcpy (%1), %%value2, 2
 %%skip:
-section .data
+section .data.word
 %%value1:
 dw (%2)
 %%value2:
@@ -271,11 +298,12 @@ cmpw (%1), %%value1, %%skip, %%change, %%skip
 log_word %%token
 memcpy (%1), %%value2, 2
 %%skip:
-section .data
+section .data.word
 %%value1:
 dw (%2)
 %%value2:
 dw (%3)
+section .data.qword
 %%token:
 dq (%4)
 section .text
@@ -308,10 +336,17 @@ dq decrypt_end
 dq 0
 %endmacro
 
+; if_equal cond, arg1, arg2, then
+%macro if_equal 4
+%1 (%2), (%3), %%next_check, (%4), %%next_check
+%%next_check:
+%endmacro
+
 ; on_rip rip, tgt
 %macro on_rip 2
-cmpqibe iret_frame, (%1), %%next_check, (%2), %%next_check
-%%next_check:
+;cmpqibe iret_frame, (%1), %%next_check, (%2), %%next_check
+;%%next_check:
+if_equal cmpqibe, iret_frame, (%1), (%2)
 %endmacro
 
 ; push_stack start, length
@@ -325,9 +360,18 @@ rmemcat 0, %%stash, 1
 rmemcat 0, (%1)+(%2)-1, (%2)
 memcpy0 0, %%stash, 1, doreti_iret
 save_reg iret_frame+24, iret_rdi
-section .data
+section .data.byte
 %%stash:
 db 0
+section .text
+%endmacro
+
+; pushqi imm
+%macro pushqi 1
+push_stack %%value, 8
+section .data.qword
+%%value:
+dq (%1)
 section .text
 %endmacro
 
@@ -340,7 +384,7 @@ dq 2
 dq read_dbgregs_fn
 dq 0
 %%end_macro:
-section .data
+section .data.qword
 %%lr:
 dq %%end_macro
 section .text
@@ -387,17 +431,56 @@ decrypt_pointer regs_stash+iret_rax
 cmpqibe regs_stash+iret_rax, sysents+48*39, decrypt_end, handle_getppid, decrypt_end
 
 handle_getppid:
-pokeq iret_frame, syscall_after
-push_stack iret_frame, 40
-pokeq iret_frame, doreti_iret
-read_dbgregs
-memcpy_offset regs_stash+iret_rdi, td_retval, dbgregs+32, 8
-pokeq0 regs_stash+iret_rax, 0, doreti_iret
+memcpy_from_offset regs_for_exit, iret_frame+24, syscall_rsp_to_regs_stash, iret_rip+40
+
+; handle kekcalls
+if_equal cmpdibe, regs_for_exit+iret_rax+4, 1, handle_kekcall_read_dbregs
+
+; call real getppid
+pushqi syscall_after
+memcpy0 iret_frame, sysents+48*39+8, 8, doreti_iret
 dq pop_all_iret
 dq 0x20
 dq 2
 dq decrypt_end
 dq 0
+
+handle_kekcall_read_dbregs:
+; rsi = destination, from userspace
+memcpy regs_stash+iret_rsi, regs_for_exit+iret_rdi, 8
+; rdx = count, fixed
+pokeq regs_stash+iret_rdx, 48
+; read debug registers
+read_dbgregs
+; prepare stack frame
+memcpy dbgreg_copyout_frame_dbgregs, dbgregs, 48
+memcpy dbgreg_copyout_frame_rsp, iret_frame+24, 8
+; push debug registers to kernel stack
+push_stack dbgreg_copyout_frame_dbgregs, dbgreg_copyout_frame_end-dbgreg_copyout_frame_dbgregs
+; rdi = source, copy from kernel stack
+memcpy regs_stash+iret_rdi, iret_frame+24, 8
+; push the rest of the stack frame
+push_stack dbgreg_copyout_frame, dbgreg_copyout_frame_dbgregs-dbgreg_copyout_frame
+; set rip
+lonely_label:
+pokeq0 iret_frame, copyout, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq decrypt_end
+dq 0
+
+;pokeq iret_frame, syscall_after
+;push_stack iret_frame, 40
+;pokeq iret_frame, doreti_iret
+;read_dbgregs
+;memcpy_offset regs_stash+iret_rdi, td_retval, dbgregs+32, 8
+;pokeq0 regs_stash+iret_rax, 0, doreti_iret
+;dq pop_all_iret
+;dq 0x20
+;dq 2
+;dq decrypt_end
+;dq 0
 
 ; simple decrypts
 decrypt_one decrypt_rax_only, iret_rax
@@ -443,8 +526,22 @@ read_dbgregs_lr:
 dq 0
 dq 0
 
+section .data.qword
+
 dbgregs:
 times 6 dq 0
+
+dbgreg_copyout_frame:
+dq doreti_iret
+dq syscall_after
+dq 0x20
+dq 0x202
+dbgreg_copyout_frame_rsp:
+dq 0
+dq 0
+dbgreg_copyout_frame_dbgregs:
+times 7 dq 0
+dbgreg_copyout_frame_end:
 
 ; pseudocode:
 ; comparison_table[a][b] = 8 * (intcmp(a, b) + 1)

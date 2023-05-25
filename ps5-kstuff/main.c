@@ -155,6 +155,8 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
     const char* symbols[] = {
         "add_rsp_iret",
+        "copyin",
+        "copyout",
         "doreti_iret",
         "dr2gpr_end",
         "dr2gpr_start",
@@ -171,6 +173,8 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     };
     uint64_t values[] = {
         kdata_base - 0x9cf853,
+        kdata_base - 0x9908e0,
+        kdata_base - 0x990990,
         kdata_base - 0x9cf84c,
         kdata_base - 0x9d6d7c,
         kdata_base - 0x9d6d93,

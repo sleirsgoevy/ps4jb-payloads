@@ -20,3 +20,5 @@
 %define iret_ss (iret_rip+32)
 
 %define td_retval 0x408
+
+%define syscall_rsp_to_regs_stash 0x110
