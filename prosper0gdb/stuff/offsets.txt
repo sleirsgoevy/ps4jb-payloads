@@ -20,6 +20,12 @@ p/x $malloc = kdata_base - 0xa9b00
 p/x $M_something = kdata_base + 0x1346080
 p/x $cpu_switch = kdata_base - 0x9d6f80
 
+# 6 instructions
+p/x $cpu_switch_dr2gpr = kdata_base - 0x9d6d93
+
+# 9 instructions
+p/x $cpu_switch_gpr2dr = kdata_base - 0x9d6c7a
+
 # mailbox
 p/x $sceSblServiceMailbox = kdata_base - 0x6824c0
 

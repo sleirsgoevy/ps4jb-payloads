@@ -339,6 +339,60 @@ void r0gdb_wrmsr(uint32_t ecx, uint64_t value)
     run_in_kernel(&regs);
 }
 
+void r0gdb_read_dbregs(uint64_t* out)
+{
+    struct regs regs = {0};
+    regs.rip = kdata_base - 0x9d6d93;
+    regs.rsp = kstack;
+    regs.eflags = 0x102;
+    for(int i = 0; i < 6; i++)
+        run_in_kernel(&regs);
+    out[0] = regs.r15;
+    out[1] = regs.r14;
+    out[2] = regs.r13;
+    out[3] = regs.r12;
+    out[4] = regs.r11;
+    out[5] = regs.rax;
+}
+
+uint64_t r0gdb_read_dbreg(int which)
+{
+    which &= 7;
+    if(which >= 6)
+        which -= 2;
+    uint64_t regs[6];
+    r0gdb_read_dbregs(regs);
+    return regs[which];
+}
+
+void r0gdb_write_dbregs(uint64_t* out)
+{
+    struct regs regs = {0};
+    regs.rip = kdata_base - 0x9d6c7a;
+    regs.rsp = kstack;
+    regs.eflags = 0x102;
+    regs.r15 = out[0];
+    regs.r14 = out[1];
+    regs.r13 = out[2];
+    regs.rbx = out[3];
+    regs.r11 = out[4];
+    regs.rcx = out[5];
+    regs.rax = r0gdb_read_dbreg(7);
+    for(int i = 0; i < 9; i++)
+        run_in_kernel(&regs);
+}
+
+void r0gdb_write_dbreg(int which, uint64_t value)
+{
+    which &= 7;
+    if(which >= 6)
+        which -= 2;
+    uint64_t regs[6];
+    r0gdb_read_dbregs(regs);
+    regs[which] = value;
+    r0gdb_write_dbregs(regs);
+}
+
 uint64_t trace_frame_size = 168;
 uint64_t trace_base;
 uint64_t trace_start;
@@ -466,8 +520,6 @@ static void eat_count(uint64_t* regs)
     count--;
 }*/
 
-static uint64_t* jprog = 0;
-
 void kmemcpy(void* dst, const void* src, size_t sz);
 
 static void untrace_fn(uint64_t* regs)
@@ -488,11 +540,14 @@ static void untrace_fn(uint64_t* regs)
         return;\
     }
 
+static uint64_t* jprog = 0;
+
 static void do_jprog(uint64_t* regs)
 {
     SKIP_SCHEDULER
+    uint64_t rip = regs[0];
     for(int i = 0; jprog[i]; i += 3)
-        if(regs[0] == jprog[i])
+        if(rip == jprog[i])
         {
             if(jprog[i+1] < 21)
                 regs[jprog[i+1]] = jprog[i+2];
@@ -504,7 +559,6 @@ static void do_jprog(uint64_t* regs)
                 regs[3] += 8;
                 regs[5] = jprog[i+2];
             }
-            break;
         }
 }
 
@@ -753,6 +807,44 @@ static void filter_sm_service(uint64_t* regs)
         instrs_left--;
     else
         trace_start -= trace_frame_size;
+}
+
+static void* malloc_locked(size_t sz)
+{
+    void* ans = mmap(0, sz, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+    if(mlock(ans, sz))
+        asm volatile("hlt");
+    return ans;
+}
+
+static uint64_t* dump_program = 0;
+
+static void do_dump_at_rip(uint64_t* regs)
+{
+    SKIP_SCHEDULER
+    uint64_t* prg = dump_program;
+    while(*prg)
+    {
+        if(regs[0] == *prg++)
+        {
+            uint64_t reg = regs[*prg++];
+            while(*prg != (uint64_t)-1)
+            {
+                uint64_t val;
+                kmemcpy(&val, (void*)(reg + (*prg++)), 8);
+                reg = val;
+            }
+            prg++;
+            *(uint64_t*)(*prg++) = reg;
+            reg &= -4096;
+            kmemcpy((void*)(*prg++), (void*)reg, 4096);
+        }
+        else
+        {
+            while(*prg++ != (uint64_t)-1);
+            prg += 2;
+        }
+    }
 }
 
 static uint64_t other_thread;
