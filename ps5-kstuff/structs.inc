@@ -18,3 +18,5 @@
 %define iret_eflags (iret_rip+16)
 %define iret_rsp (iret_rip+24)
 %define iret_ss (iret_rip+32)
+
+%define td_retval 0x408
