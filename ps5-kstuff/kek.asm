@@ -19,6 +19,11 @@ extern scratchpad
 extern copyin
 extern copyout
 
+extern soo_ioctl
+
+%define SYS_getppid 39
+%define SYS_ioctl 54
+
 %include "structs.inc"
 
 global _start
@@ -440,8 +445,10 @@ on_rip doreti_iret, handle_broken_iret
 on_rip dr2gpr_end, read_dbgregs_ret
 on_rip gpr2dr_1_end, write_dbgregs_ret1
 on_rip gpr2dr_2_end, write_dbgregs_ret2
+on_rip soo_ioctl, handle_soo_ioctl
 
 on_rip 0xde00ad0000000001, handle_kekcall_write_dbregs_after_copyout
+on_rip 0xde00ad0000000002, restore_dbregs_after_syscall
 
 ; generic fallback for unknown crashes
 
@@ -483,7 +490,8 @@ dq 0
 
 handle_syscall_before:
 decrypt_pointer regs_stash+iret_rax
-cmpqibe regs_stash+iret_rax, sysents+48*39, decrypt_end, handle_getppid, decrypt_end
+if_equal cmpqibe, regs_stash+iret_rax, sysents+48*SYS_ioctl, handle_ioctl
+cmpqibe regs_stash+iret_rax, sysents+48*SYS_getppid, decrypt_end, handle_getppid, decrypt_end
 
 handle_getppid:
 memcpy_from_offset regs_for_exit, iret_frame+24, syscall_rsp_to_regs_stash, iret_rip+40
@@ -492,9 +500,8 @@ memcpy_from_offset regs_for_exit, iret_frame+24, syscall_rsp_to_regs_stash, iret
 if_equal cmpdibe, regs_for_exit+iret_rax+4, 1, handle_kekcall_read_dbregs
 if_equal cmpdibe, regs_for_exit+iret_rax+4, 2, handle_kekcall_write_dbregs
 
-; call real getppid
-pushqi syscall_after
-memcpy0 iret_frame, sysents+48*39+8, 8, doreti_iret
+; call real getppid. the register is already decrypted, so just fall through
+times iret_rip db 0
 dq pop_all_iret
 dq 0x20
 dq 2
@@ -588,17 +595,90 @@ dq 2
 dq decrypt_end
 dq 0
 
-;pokeq iret_frame, syscall_after
-;push_stack iret_frame, 40
-;pokeq iret_frame, doreti_iret
-;read_dbgregs
-;memcpy_offset regs_stash+iret_rdi, td_retval, dbgregs+32, 8
-;pokeq0 regs_stash+iret_rax, 0, doreti_iret
-;dq pop_all_iret
-;dq 0x20
-;dq 2
-;dq decrypt_end
-;dq 0
+restore_dbregs_after_syscall:
+; pop the data from stack
+pop_stack dbgreg_copyout_frame_dbgregs, dbgreg_copyout_frame_end-dbgreg_copyout_frame_dbgregs
+; write debug registers
+memcpy dbgregs, dbgreg_copyout_frame_dbgregs, 48
+write_dbgregs
+; done, now return
+pokeq0 iret_frame, syscall_after, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq decrypt_end
+dq 0
+
+handle_ioctl:
+; fix up rsi for the original syscall
+ptr_add_imm regs_stash+iret_rsi, iret_frame+24, syscall_rsp_to_rsi
+; read and save current debug registers
+read_dbgregs
+memcpy dbgreg_copyout_frame_dbgregs, dbgregs, 48
+; set up a stack frame to restore them on return
+pokeq dbgreg_copyout_frame_rip, 0xde00ad0000000002
+; push old debug registers
+push_stack dbgreg_copyout_frame_dbgregs, dbgreg_copyout_frame_end-dbgreg_copyout_frame_dbgregs
+; save stack pointer, we don't want them popped
+memcpy dbgreg_copyout_frame_rsp, iret_frame+24, 8
+; push the rest of the stack frame
+push_stack dbgreg_copyout_frame, dbgreg_copyout_frame_dbgregs-dbgreg_copyout_frame
+; load modified debug registers
+memcpy dbgregs, dbgregs_for_ioctl, 48
+write_dbgregs
+; get td_pcb
+memcpy_from_offset dbgreg_copyout_frame_dbgregs+48, regs_stash+iret_rdi, td_pcb, 8
+; get pcb_flags pointer
+ptr_add_imm .peek+iret_rsi, dbgreg_copyout_frame_dbgregs+48, pcb_flags
+memcpy .poke+iret_rdi, .peek+iret_rsi, 8
+; set PCB_DBREGS (2)
+section .data.byte
+.tmp:
+db 0
+section .text
+.peek:
+memcpy .tmp, 0, 1
+orbi .tmp, 2
+.poke:
+memcpy 0, .tmp, 1
+; call the original syscall
+memcpy0 iret_frame, sysents+48*SYS_ioctl+8, 8, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq decrypt_end
+dq 0
+
+handle_soo_ioctl:
+; check if we should override this call
+if_not_equal cmpdibe, regs_stash+iret_rsi, 0x40045145, decrypt_end
+; write the sentinel. no copyout is necessary, the kernel handles this for us
+memcpy .poke+iret_rdi, regs_stash+iret_rdx, 8
+.poke:
+memcpy 0, .sentinel, 4
+; fake the function to return 0
+pop_stack iret_frame, 8
+pokeq0 regs_stash+iret_rax, 0, doreti_iret
+; we're done
+dq pop_all_iret
+dq 0x20
+dq 2
+dq decrypt_end
+dq 0
+section .data.dword
+.sentinel:
+dd 0xdeaddead
+section .text
+
+section .data.qword
+dbgregs_for_ioctl:
+dq soo_ioctl
+dq 0
+dq 0
+dq 0
+dq 0
+dq 0x402
+section .text
 
 ; simple decrypts
 decrypt_one decrypt_rax_only, iret_rax

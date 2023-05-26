@@ -24,4 +24,5 @@
 
 %define pcb_flags 0x100
 
+%define syscall_rsp_to_rsi 0x88
 %define syscall_rsp_to_regs_stash 0x110

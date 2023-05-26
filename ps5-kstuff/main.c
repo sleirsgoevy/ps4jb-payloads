@@ -146,12 +146,16 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
     r0gdb_init(ds, a, b, c, d);
     dbg_enter();
-    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"allocating memory... ", (uintptr_t)21);
+    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"allocating userspace memory... ", (uintptr_t)31);
+    char* mem = mmap(0, kek_end-kek, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+    mlock(mem, kek_end-kek);
+    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\nallocating kernel memory... ", (uintptr_t)33);
     for(int i = 0; i < 8; i += 2)
     {
         mem_blocks[i] = r0gdb_kmalloc(1<<24);
-        mem_blocks[i+1] = mem_blocks[i] + (1<<24);
+        mem_blocks[i+1] = (mem_blocks[i] ? mem_blocks[i] + (1<<24) : 0);
     }
+    char* scratchpad = kmalloc(1048576);
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
     const char* symbols[] = {
         "add_rsp_iret",
@@ -170,6 +174,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         "push_pop_all_iret",
         "rep_movsb_pop_rbp_ret",
         "scratchpad",
+        "soo_ioctl",
         "syscall_after",
         "syscall_before",
         "sysents",
@@ -191,14 +196,13 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kdata_base - 0x9cf8ab, // pop_all_iret
         kdata_base - 0x96be70, // push_pop_all_iret
         kdata_base - 0x990a55, // rep_movsb_pop_rbp_ret
-        r0gdb_kmalloc(1048576),// scratchpad
+        (uint64_t)scratchpad,  // scratchpad
+        kdata_base - 0x96eb98, // soo_ioctl
         kdata_base - 0x8022ee, // syscall_after
         kdata_base - 0x802311, // syscall_before
         kdata_base + 0x1709c0, // sysents
         0,
     };
-    char* mem = mmap(0, kek_end-kek, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
-    mlock(mem, kek_end-kek);
     char* p_mem = mem;
     for(char* p_kek = kek; p_kek != kek_end; p_kek++)
         *p_mem++ = *p_kek;
@@ -226,7 +230,9 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kmemcpy((char*)IDT+16*13+4, "\3", 1);
         kmemcpy((char*)TSS(cpu)+28+3*8, (char*)entry+8, 8);
     }
-    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done loading\npatching sysentvec... ", (uintptr_t)35);
+    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done loading\n", (uintptr_t)13);
+    kmemzero((char*)IDT+16*1, 16);
+    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"patching sysentvec... ", (uintptr_t)22);
     copyin(kdata_base + 0xd11bb8 + 14, &(const uint16_t[1]){0xdeb7}, 2);
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
     asm volatile("ud2");

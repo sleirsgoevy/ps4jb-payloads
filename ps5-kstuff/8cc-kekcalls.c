@@ -1,5 +1,9 @@
 #include <printf/printf.h>
+#include <ps4/errno.h>
+#include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
+#include <sys/filio.h>
 #include <unistd.h>
 #include <time.h>
 
@@ -77,5 +81,16 @@ int main(void)
         printf("%d\n", kekcall((uint64_t)dr, 0, 0, 0, 0, 0, KEKCALL_READ_DR));
         printf("%p %p %p %p %p %p\n", dr[0], dr[1], dr[2], dr[3], dr[4], dr[5]);
     }
+    int sock = socket(AF_UNIX, SOCK_DGRAM, 0);
+    int q = 0;
+    printf("%d", ioctl(sock, 0x40045145, &q));
+    printf(" %d %d\n", errno, q);
+    q = 1;
+    printf("%d", ioctl(sock, FIONBIO, &q));
+    printf(" %d %d\n", errno, q);
+    printf("%d", ioctl(0, 0x40045145, &q));
+    printf(" %d %d\n", errno, q);
+    printf("%d\n", kekcall((uint64_t)dr, 0, 0, 0, 0, 0, KEKCALL_READ_DR));
+    printf("%p %p %p %p %p %p\n", dr[0], dr[1], dr[2], dr[3], dr[4], dr[5]);
     return 0;
 }
