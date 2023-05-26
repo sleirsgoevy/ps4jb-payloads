@@ -1,6 +1,7 @@
 #include <printf/printf.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <time.h>
 
 uint64_t __builtin_gadget_addr(const char*);
 
@@ -51,8 +52,9 @@ int kekcall(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t
     return ((uint64_t(*)(void))rop)();
 }
 
-#define KEKCALL_GETPPID __builtin_gadget_addr("dq 0x000000027")
-#define KEKCALL_READ_DR __builtin_gadget_addr("dq 0x100000027")
+#define KEKCALL_GETPPID  __builtin_gadget_addr("dq 0x000000027")
+#define KEKCALL_READ_DR  __builtin_gadget_addr("dq 0x100000027")
+#define KEKCALL_WRITE_DR __builtin_gadget_addr("dq 0x200000027")
 
 int main(void)
 {
@@ -60,5 +62,20 @@ int main(void)
     uint64_t dr[6] = {0};
     printf("%d\n", kekcall((uint64_t)dr, 0, 0, 0, 0, 0, KEKCALL_READ_DR));
     printf("%p %p %p %p %p %p\n", dr[0], dr[1], dr[2], dr[3], dr[4], dr[5]);
+    dr[0] = 0x41414141;
+    dr[1] = 0x42424242;
+    dr[2] = 0x43434343;
+    dr[3] = 0x44444444;
+    dr[4] |= 3;
+    dr[5] = 0x401;
+    printf("%d\n", kekcall((uint64_t)dr, 0, 0, 0, 0, 0, KEKCALL_WRITE_DR));
+    printf("%d\n", kekcall((uint64_t)dr, 0, 0, 0, 0, 0, KEKCALL_READ_DR));
+    printf("%p %p %p %p %p %p\n", dr[0], dr[1], dr[2], dr[3], dr[4], dr[5]);
+    for(int i = 0; i < 10; i++)
+    {
+        nanosleep(&(const struct timespec){1, 0}, 0);
+        printf("%d\n", kekcall((uint64_t)dr, 0, 0, 0, 0, 0, KEKCALL_READ_DR));
+        printf("%p %p %p %p %p %p\n", dr[0], dr[1], dr[2], dr[3], dr[4], dr[5]);
+    }
     return 0;
 }

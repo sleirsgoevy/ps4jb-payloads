@@ -19,6 +19,9 @@
 %define iret_rsp (iret_rip+24)
 %define iret_ss (iret_rip+32)
 
+%define td_pcb 0x3f8
 %define td_retval 0x408
+
+%define pcb_flags 0x100
 
 %define syscall_rsp_to_regs_stash 0x110

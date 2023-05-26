@@ -147,7 +147,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     r0gdb_init(ds, a, b, c, d);
     dbg_enter();
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"allocating memory... ", (uintptr_t)21);
-    for(int i = 0; i < 4; i += 2)
+    for(int i = 0; i < 8; i += 2)
     {
         mem_blocks[i] = r0gdb_kmalloc(1<<24);
         mem_blocks[i+1] = mem_blocks[i] + (1<<24);
@@ -160,6 +160,10 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         "doreti_iret",
         "dr2gpr_end",
         "dr2gpr_start",
+        "gpr2dr_1_end",
+        "gpr2dr_1_start",
+        "gpr2dr_2_end",
+        "gpr2dr_2_start",
         "kdata_base",
         "pop_all_except_rdi_iret",
         "pop_all_iret",
@@ -172,21 +176,25 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         0,
     };
     uint64_t values[] = {
-        kdata_base - 0x9cf853,
-        kdata_base - 0x9908e0,
-        kdata_base - 0x990990,
-        kdata_base - 0x9cf84c,
-        kdata_base - 0x9d6d7c,
-        kdata_base - 0x9d6d93,
-        kdata_base,
-        kdata_base - 0x9cf8a7,
-        kdata_base - 0x9cf8ab,
-        kdata_base - 0x96be70,
-        kdata_base - 0x990a55,
-        r0gdb_kmalloc(1048576),
-        kdata_base - 0x8022ee,
-        kdata_base - 0x802311,
-        kdata_base + 0x1709c0,
+        kdata_base - 0x9cf853, // add_rsp_iret
+        kdata_base - 0x9908e0, // copyin
+        kdata_base - 0x990990, // copyout
+        kdata_base - 0x9cf84c, // doreti_iret
+        kdata_base - 0x9d6d7c, // dr2gpr_end
+        kdata_base - 0x9d6d93, // dr2gpr_start
+        kdata_base - 0x9d6c55, // gpr2dr_1_end
+        kdata_base - 0x9d6c7a, // gpr2dr_1_start
+        kdata_base - 0x9d6de9, // gpr2dr_2_end
+        kdata_base - 0x9d6b87, // gpr2dr_2_start
+        kdata_base,            // kdata_base
+        kdata_base - 0x9cf8a7, // pop_all_except_rdi_iret
+        kdata_base - 0x9cf8ab, // pop_all_iret
+        kdata_base - 0x96be70, // push_pop_all_iret
+        kdata_base - 0x990a55, // rep_movsb_pop_rbp_ret
+        r0gdb_kmalloc(1048576),// scratchpad
+        kdata_base - 0x8022ee, // syscall_after
+        kdata_base - 0x802311, // syscall_before
+        kdata_base + 0x1709c0, // sysents
         0,
     };
     char* mem = mmap(0, kek_end-kek, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
