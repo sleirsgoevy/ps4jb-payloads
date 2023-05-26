@@ -737,17 +737,22 @@ uint64_t r0gdb_kfncall(uint64_t fn, ...)
 
 uint64_t r0gdb_kmalloc(size_t sz)
 {
-    return r0gdb_kfncall(kdata_base - 0xa9b00, sz, kdata_base + 0x1346080, 2 /* M_WAITOK */);
+    //return r0gdb_kfncall(kdata_base - 0xa9b00, sz, kdata_base + 0x1346080, 2 /* M_WAITOK */);
+    return r0gdb_kfncall(kdata_base - 0xa9b00, sz, kdata_base + 0x1346080, 1 /* M_NOWAIT */);
 }
 
 static uint64_t instr_start;
+static uint64_t instr_jump;
 static int instrs_left;
 
 static void instr_count(uint64_t* regs)
 {
     SKIP_SCHEDULER
     if(regs[0] == instr_start)
+    {
+        regs[0] = instr_jump;
         instr_start = 0;
+    }
     else if(!instr_start)
     {
         if(!instrs_left)
@@ -757,11 +762,12 @@ static void instr_count(uint64_t* regs)
     }
 }
 
-static int count_instrs(void(*fn)(), uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t entry, int instrs)
+static int count_instrs(void(*fn)(), uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t entry, uint64_t jump, int instrs)
 {
     r0gdb_trace_reset();
     trace_prog = instr_count;
     instr_start = entry;
+    instr_jump = jump ? jump : entry;
     instrs_left = instrs;
     set_trace();
     fn(arg1, arg2, arg3);
