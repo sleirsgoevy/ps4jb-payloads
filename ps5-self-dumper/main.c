@@ -195,11 +195,11 @@ struct memfd dump_elf(const char* path)
     print_hex(phoff);
     print_string("\n");
     memfd_pwrite(&out, elf, phoff+56*phnum, 0);
+    int copied_ok = 0;
+    int loads_failed = 0;
     for(int i = 0; i < phnum; i++)
     {
         char* p = elf + phoff + 56 * i;
-        if(*(uint32_t*)p != 1) //PT_LOAD
-            continue;
         uint64_t offset = *(uint64_t*)(p+8);
         uint64_t filesz = *(uint64_t*)(p+32);
         print_string("segment #");
@@ -208,6 +208,11 @@ struct memfd dump_elf(const char* path)
         print_hex(offset);
         print_string(", filesz = ");
         print_hex(filesz);
+        if(filesz == 0)
+        {
+            print_string(" (empty, skipping dump)\n");
+            continue;
+        }
         print_string("\n");
         void* map = mmap20(0, filesz, PROT_READ, MAP_SHARED|0x80000, fd, (uint64_t)i << 32);
         if(map == MAP_FAILED)
@@ -220,18 +225,24 @@ struct memfd dump_elf(const char* path)
         print_string("map = ");
         print_hex((uint64_t)map);
         print_string("\n");
-        if(memfd_pwrite(&out, map, filesz, offset))
+        if(!memfd_pwrite(&out, map, filesz, offset))
+            copied_ok++;
+        else if(*(uint32_t*)p == 1) //PT_LOAD
         {
-            print_string("got SIGSEGV while copying segment, aborting\n");
-            memfd_close(&out);
-            munmap(map, size);
-            close(fd);
-            return out;
+            print_string("got SIGSEGV while copying a PT_LOAD segment, treating this as an error\n");
+            loads_failed++;
         }
         munmap(map, filesz);
     }
     munmap(map, size);
     close(fd);
+    if(loads_failed)
+        memfd_close(&out);
+    else if(!copied_ok)
+    {
+        print_string("failed to copy any segments, treating this as an error\n");
+        memfd_close(&out);
+    }
     return out;
 }
 
