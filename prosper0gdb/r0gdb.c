@@ -815,6 +815,112 @@ static void filter_sm_service(uint64_t* regs)
         trace_start -= trace_frame_size;
 }
 
+static void filter_sm_calls(uint64_t* regs)
+{
+    static int inside = 0;
+    static uint64_t limit = 0;
+    SKIP_SCHEDULER
+    if(inside && regs[0] == limit)
+    {
+        inside = 0;
+        limit = 0;
+    }
+    if(/*regs[0] == kdata_base - 0x8a5a40 //verifyHeader
+    || regs[0] == kdata_base - 0x8a5c40 //sceSblAuthMgrIsLoadable2
+    || regs[0] == kdata_base - 0x8a5780 //loadSelfSegment
+    ||*/ regs[0] == kdata_base - 0x8a5410) //decryptSelfBlock
+    {
+        inside = 1;
+        kmemcpy(&limit, (void*)regs[3], 8);
+    }
+    if(!inside)
+        trace_start -= trace_frame_size;
+}
+
+static char empty_page[4096];
+static int kek1;
+static int kek2;
+static int kek3;
+static int kek4;
+static uint64_t kekv1;
+static uint64_t kekv2;
+static uint64_t kekv3;
+static uint64_t kekv4;
+static uint64_t kekv5;
+static uint64_t kekv6;
+static uint64_t kekv7;
+static uint64_t kekv8;
+
+static void very_kek(uint64_t* regs)
+{
+    SKIP_SCHEDULER
+    if(regs[0] == kdata_base - 0x8a5780)
+    {
+        uint64_t sp = regs[3];
+        kmemcpy((void*)(sp - 0x128), empty_page, 0x128);
+        kek1 += 1;
+    }
+    if(regs[0] == kdata_base - 0x2cc918)
+    {
+        uint64_t sp = regs[3];
+        uint64_t sp_page = sp & -4096;
+        uint64_t lr;
+        kmemcpy(&lr, (void*)(sp + 0x18), 8);
+        if(lr == kdata_base - 0x8a5727)
+        {
+            uint64_t backup[20];
+            kmemcpy(backup, (void*)sp, 32 /*24*/);
+            backup[4] = kekv1;
+            backup[5] = kekv2;
+            //backup[3] = backup[4] = kdata_base - 0x28a3a0;
+            sp -= 16;
+            kmemcpy((void*)sp, backup, 48 /*40*/);
+            regs[3] = sp;
+            kek2 += 1;
+        }
+    }
+    if(regs[0] == kdata_base - 0x8a5546)
+    {
+        uint64_t restore[2];
+        kmemcpy(restore, (void*)regs[3], 16);
+        kekv1 = restore[0];
+        kekv2 = restore[1];
+        regs[3] += 16;
+    }
+    if(regs[0] == kdata_base - 0x2cc88e)
+    {
+        uint64_t backup[10];
+        kmemcpy(backup, (void*)regs[3], 32);
+        if(backup[3] == kdata_base - 0x8a538a)
+        {
+            //backup[5] = backup[3];
+            //backup[3] = backup[4] = kdata_base - 0x28a3a0;
+            backup[4] = kekv3;
+            backup[5] = kekv4;
+            backup[6] = kekv5;
+            backup[7] = kekv6;
+            backup[8] = kekv7;
+            backup[9] = kekv8;
+            regs[3] -= 48;
+            kmemcpy((void*)regs[3], backup, 80);
+            kek3 += 1;
+        }
+    }
+    if(regs[0] == kdata_base - 0x8a52c3)
+    {
+        uint64_t restore[6];
+        kmemcpy(restore, (void*)regs[3], 48);
+        kekv3 = restore[0];
+        kekv4 = restore[1];
+        kekv5 = restore[2];
+        kekv6 = restore[3];
+        kekv7 = restore[4];
+        kekv8 = restore[5];
+        regs[3] += 48;
+        kek4 += 1;
+    }
+}
+
 static void* malloc_locked(size_t sz)
 {
     void* ans = mmap(0, sz, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
@@ -831,9 +937,28 @@ static void do_dump_at_rip(uint64_t* regs)
     uint64_t* prg = dump_program;
     while(*prg)
     {
-        if(regs[0] == *prg++)
+        int use = (regs[0] == *prg++);
+        if(use)
         {
-            uint64_t reg = regs[*prg++];
+            if(*prg == (uint64_t)-1)
+                use = 0;
+            else if(*prg != 0)
+            {
+                --*prg;
+                if(*prg == 0)
+                    *prg = -1;
+                else
+                    use = 0;
+            }
+        }
+        prg++;
+        if(use)
+        {
+            uint64_t reg;
+            if((*prg) == (uint64_t)-1)
+                reg = (uint64_t)regs;
+            else
+                reg = regs[*prg++];
             while(*prg != (uint64_t)-1)
             {
                 uint64_t val;
@@ -851,6 +976,138 @@ static void do_dump_at_rip(uint64_t* regs)
             prg += 2;
         }
     }
+}
+
+static uint64_t s_auth_info_for_dynlib[17] = {0x4900000000000002, 0x0, 0x800000000000ff00, 0x0, 0x0, 0x7000700080000000, 0x8000000000000000, 0x0, 0xf0000000ffff4000, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
+
+static char mailbox_request[16384];
+static char mailbox_response[16384];
+static char mailbox_fakeresp[128];
+static uint64_t mailbox_lr[128];
+static uint64_t mailbox_rdx;
+static size_t mailbox_n = 0;
+static size_t blocks_decrypted = 0;
+static char header_backup[0x6a0];
+static uint32_t size_backup;
+static uint64_t header_ptr;
+static int do_fself = 0;
+static uint64_t fself_hook_lr;
+static char encrypted_memory[4096];
+static char decrypted_memory[4096];
+static char now_decrypted_memory[4096];
+static char faked_decrypts[16384];
+static size_t n_faked_decrypts;
+
+static void trace_mailbox(uint64_t* regs)
+{
+    SKIP_SCHEDULER
+    if(regs[0] == kdata_base - 0x8a5410)
+        blocks_decrypted++;
+    if((do_fself & 16))
+        fix_mmap_self(regs);
+#if 0
+    if((do_fself & 1) && regs[0] == kdata_base - 0x8a5a40) //verifyHeader
+    {
+        untrace_fn(regs);
+        mailbox_rdx = regs[12];
+        kmemcpy(&fself_hook_lr, (void*)regs[3], 8);
+        kmemcpy(&size_backup, (void*)(mailbox_rdx+8), 4);
+        kmemcpy(&header_ptr, (void*)(mailbox_rdx+0x38), 8);
+        kmemcpy(header_backup, (void*)header_ptr, 0x6a0);
+        kmemcpy((void*)header_ptr, (void*)(kdata_base + 0xdc16e8), 0x6a0);
+        kmemcpy((void*)(mailbox_rdx+8), &(const int[1]){0x6a0}, 4);
+    }
+    else if((do_fself & 1) && regs[0] == fself_hook_lr) //verifyHeader returned
+    {
+        fself_hook_lr = 0;
+        kmemcpy((void*)header_ptr, header_backup, 0x6a0);
+        kmemcpy((void*)(mailbox_rdx+8), &size_backup, 4);
+    }
+#endif
+    if((do_fself & 1) && regs[0] == kdata_base - 0x8a58c1) //verifyHeader calls sceSblServiceMailbox
+    {
+        regs[0] += 5;
+        regs[3] -= 8;
+        kmemcpy((void*)regs[3], regs, 8);
+        regs[0] = kdata_base - 0x6824c0; //sceSblServiceMailbox
+        untrace_fn(regs);
+        mailbox_rdx = regs[19];
+        kmemcpy(&header_ptr, (void*)(mailbox_rdx+0x38), 8);
+        kmemcpy(header_backup, (void*)header_ptr, 0x6a0);
+        kmemcpy((void*)header_ptr, (void*)(kdata_base + 0xdc16e8), 0x6a0);
+        kmemcpy((void*)(regs[7] + 16), &(const uint32_t[1]){0x6a0}, 4);
+    }
+    else if((do_fself & 1) && regs[0] == kdata_base - 0x8a58bc) //sceSblServiceMailbox returns to verifyHeader
+    {
+        kmemcpy((void*)header_ptr, header_backup, 0x6a0);
+    }
+    else if((do_fself & 2) && regs[0] == kdata_base - 0x8a5c40) //sceSblAuthMgrIsLoadable2
+    {
+        kmemcpy(regs, (void*)regs[3], 8);
+        regs[3] += 8;
+        regs[5] = 0;
+        kmemcpy((void*)regs[13], s_auth_info_for_dynlib, sizeof(s_auth_info_for_dynlib));
+    }
+    else if(regs[0] == kdata_base - 0x6824c0) //sceSblServiceMailbox
+    {
+        uint64_t lr;
+        kmemcpy(&lr, (void*)regs[3], 8);
+        if((do_fself & 4) && lr == kdata_base - 0x8a5541) //from loadSelfSegment
+        {
+            regs[3] += 8;
+            regs[0] = lr;
+            regs[5] = 0;
+            kmemcpy((void*)(regs[7]+4), &(const uint32_t[1]){0}, 4);
+            return;
+        }
+        else if(lr == kdata_base - 0x8a5014) //from decryptSelfBlock
+        {
+            uint64_t request[7];
+            kmemcpy(request, (void*)regs[7], 56);
+            uint64_t p1 = request[1];
+            uint64_t p2 = request[2];
+            uint32_t sz = request[6];
+            uint64_t v1;
+            kmemcpy(&v1, (void*)(regs[3]+24), 8);
+            uint64_t v2 = (v1 - p1) + p2;
+            kmemcpy(encrypted_memory, (void*)v2, 4096);
+            kmemcpy(decrypted_memory, (void*)v1, 4096);
+            if((do_fself & 8))
+            {
+                if(n_faked_decrypts < 128)
+                {
+                    kmemcpy(faked_decrypts+128*n_faked_decrypts, (void*)regs[7], 128);
+                    n_faked_decrypts++;
+                }
+                regs[3] += 8;
+                regs[0] = lr;
+                regs[5] = 0;
+                kmemcpy((void*)(regs[7]+4), &(const uint32_t[1]){0}, 4);
+                kmemcpy((void*)v1, (void*)v2, sz);
+                return;
+            }
+        }
+        else if(lr == kdata_base - 0x8a5cbe) //from sceSblAuthMgrSmFinalize
+            return;
+        mailbox_lr[mailbox_n] = lr;
+        mailbox_rdx = regs[7];
+        kmemcpy(mailbox_request+128*mailbox_n, (void*)mailbox_rdx, 128);
+        if(mailbox_fakeresp[mailbox_n])
+        {
+            regs[3] += 8;
+            regs[0] = mailbox_lr[mailbox_n];
+            regs[5] = 0;
+            kmemcpy((void*)mailbox_rdx, mailbox_response+128*mailbox_n, 128);
+            mailbox_n++;
+        }
+    }
+    else if(regs[0] == mailbox_lr[mailbox_n])
+    {
+        kmemcpy(mailbox_response+128*mailbox_n, (void*)mailbox_rdx, 128);
+        mailbox_n++;
+    }
+    else
+        do_dump_at_rip(regs);
 }
 
 static uint64_t other_thread;

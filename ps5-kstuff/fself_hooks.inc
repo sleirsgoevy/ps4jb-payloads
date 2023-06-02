@@ -1,0 +1,23 @@
+extern decryptSelfBlock_epilogue
+extern decryptSelfBlock_watchpoint
+extern loadSelfSegment_epilogue
+extern loadSelfSegment_watchpoint
+extern sceSblServiceIsLoadable2
+extern sceSblServiceMailbox
+
+on_rip sceSblServiceMailbox, handle_sceSblServiceMailbox
+on_rip sceSblServiceIsLoadable2, handle_sceSblServiceIsLoadable2
+
+; r10 non-parasite
+on_rip loadSelfSegment_watchpoint, handle_loadSelfSegment_parasite
+
+; loadSelfSegment return cleanup
+on_rip loadSelfSegment_epilogue, handle_loadSelfSegment_return
+
+; rdx non-parasite
+on_rip decryptSelfBlock_watchpoint, handle_decryptSelfBlock_parasite
+
+; decryptSelfBlock return cleanup
+on_rip decryptSelfBlock_epilogue, handle_decryptSelfBlock_return
+
+on_rip 0xde01ad0000000001, handle_sceSblServiceMailbox_verifyHeader_return

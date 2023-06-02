@@ -19,6 +19,10 @@ extern scratchpad
 extern copyin
 extern copyout
 
+; global variables break the loader
+;global log_area
+;global log_area_cur
+
 extern soo_ioctl
 
 %define SYS_getppid 39
@@ -136,6 +140,14 @@ memcpy0 scratchpad, 0, (%3), doreti_iret
 save_reg (%1), iret_rsi
 %endmacro
 
+; ptr_sub_imm p_dest, p_ptr, imm
+%macro ptr_sub_imm 3
+memcpy %%seek+iret_rsi, (%2), 8
+%%seek:
+rmemcpy0 scratchpad+(%3)-1, 0, (%3), doreti_iret
+save_reg (%1), iret_rsi
+%endmacro
+
 ; memcpy_offset p_dest, offset, src, size
 %macro memcpy_offset 4
 ptr_add_imm %%poke+iret_rdi, (%1), (%2)
@@ -146,6 +158,13 @@ memcpy 0, (%3), (%4)
 ; memcpy_from_offset dest, p_src, offset, size
 %macro memcpy_from_offset 4
 ptr_add_imm %%peek+iret_rsi, (%2), (%3)
+%%peek:
+memcpy (%1), 0, (%4)
+%endmacro
+
+; memcpy_from_neg_offset dest, p_src, offset, size
+%macro memcpy_from_neg_offset 4
+ptr_sub_imm %%peek+iret_rsi, (%2), (%3)
 %%peek:
 memcpy (%1), 0, (%4)
 %endmacro
@@ -249,6 +268,21 @@ section .data.qword
 %%value:
 dq (%2)
 section .text
+%endmacro
+
+; andb ptr1, ptr2
+%macro andb 2
+memcpy %%peek+iret_rsi, (%1), 1
+memcpy %%peek+iret_rsi+1, (%2), 1
+%%peek:
+memcpy (%1), and_table, 1
+%endmacro
+
+; andbi ptr1, imm
+%macro andbi 2
+memcpy %%peek+iret_rsi+1, (%1), 1
+%%peek:
+memcpy (%1), and_table+(%2), 1
 %endmacro
 
 ; orb ptr1, ptr2
@@ -424,6 +458,7 @@ dq 0
 %%end_macro:
 %endmacro
 
+; write_dbgregs
 %macro write_dbgregs 0
 pokeq0 write_dbgregs_lr, %%end_macro, doreti_iret
 dq pop_all_iret
@@ -432,6 +467,131 @@ dq 2
 dq write_dbgregs_fn
 dq 0
 %%end_macro:
+%endmacro
+
+; addbc out, left, right, carry_out
+%macro addbc 4
+memcpy %%poke1+iret_rsi, (%2), 1
+memcpy %%poke1+iret_rsi+1, (%3), 1
+memcpy %%poke2+iret_rsi, %%poke1+iret_rsi, 2
+%%poke1:
+memcpy (%1), addition_table, 1
+%%poke2:
+memcpy (%4), carry_table, 1
+%endmacro
+
+; addbcc out, left, right, carry_in, carry_out
+%macro addbcc 5
+addbc (%1), (%2), (%3), %%tmp
+addbc (%1), (%1), (%4), (%5)
+orb (%5), %%tmp
+section .data.byte
+%%tmp:
+db 0
+section .text
+%endmacro
+
+; addwcc out, left, right, carry_in, carry_out
+%macro addwcc 5
+addbcc (%1), (%2), (%3), (%4), %%tmp
+addbcc (%1)+1, (%2)+1, (%3)+1, %%tmp, (%5)
+section .data.byte
+%%tmp:
+db 0
+section .text
+%endmacro
+
+; adddcc out, left, right, carry_in, carry_out
+%macro adddcc 5
+addwcc (%1), (%2), (%3), (%4), %%tmp
+addwcc (%1)+2, (%2)+2, (%3)+2, %%tmp, (%5)
+section .data.byte
+%%tmp:
+db 0
+section .text
+%endmacro
+
+; addqcc out, left, right, carry_in, carry_out
+%macro addqcc 5
+adddcc (%1), (%2), (%3), (%4), %%tmp
+adddcc (%1)+4, (%2)+4, (%3)+4, %%tmp, (%5)
+section .data.byte
+%%tmp:
+db 0
+section .text
+%endmacro
+
+; addq out, left, right
+%macro addq 3
+addqcc (%1), (%2), (%3), %%zero, scratchpad
+section .data.byte
+%%zero:
+db 0
+section .text
+%endmacro
+
+; notb out, in
+%macro notb 2
+memcpy %%peek+iret_rsi, (%2), 1
+%%peek:
+memcpy (%1), not_table, 1
+%endmacro
+
+; subq out, left, right
+%macro subq 3
+notb %%tmp, (%3)
+notb %%tmp+1, (%3)+1
+notb %%tmp+2, (%3)+2
+notb %%tmp+3, (%3)+3
+notb %%tmp+4, (%3)+4
+notb %%tmp+5, (%3)+5
+notb %%tmp+6, (%3)+6
+notb %%tmp+7, (%3)+7
+addqcc (%1), %%tmp, (%2), %%one, scratchpad
+section .data.byte
+%%one:
+db 1
+section .data.qword
+%%tmp:
+dq 0
+section .text
+%endmacro
+
+; mulbt out, in, carry, mul_table, carry_table
+%macro mulbt 5
+memcpy %%peek1+iret_rsi, (%2), 1
+memcpy %%peek2+iret_rsi, (%2), 1
+%%peek1:
+memcpy (%1), (%4), 1
+%%peek2:
+memcpy (%3), (%5), 1
+%endmacro
+
+; mulqt out, in, mul_table, carry_table
+%macro mulqt 4
+mulbt (%1), (%2), %%second+1, (%3), (%4)
+mulbt (%1)+1, (%2)+1, %%second+2, (%3), (%4)
+mulbt (%1)+2, (%2)+2, %%second+3, (%3), (%4)
+mulbt (%1)+3, (%2)+3, %%second+4, (%3), (%4)
+mulbt (%1)+4, (%2)+4, %%second+5, (%3), (%4)
+mulbt (%1)+5, (%2)+5, %%second+6, (%3), (%4)
+mulbt (%1)+6, (%2)+6, %%second+7, (%3), (%4)
+mulbt (%1)+7, (%2)+7, scratchpad, (%3), (%4)
+addq (%1), (%1), %%second
+section .data.qword
+%%second:
+dq 0
+section .text
+%endmacro
+
+; mulq32 out, in
+%macro mulq32 2
+mulqt (%1), (%2), mul32_table, mul32_carry
+%endmacro
+
+; mulq56 out, in
+%macro mulq56 2
+mulqt (%1), (%2), mul56_table, mul56_carry
 %endmacro
 
 prog_entry:
@@ -449,6 +609,8 @@ on_rip soo_ioctl, handle_soo_ioctl
 
 on_rip 0xde00ad0000000001, handle_kekcall_write_dbregs_after_copyout
 on_rip 0xde00ad0000000002, restore_dbregs_after_syscall
+
+%include "fself_hooks.inc"
 
 ; generic fallback for unknown crashes
 
@@ -491,6 +653,7 @@ dq 0
 handle_syscall_before:
 decrypt_pointer regs_stash+iret_rax
 if_equal cmpqibe, regs_stash+iret_rax, sysents+48*SYS_ioctl, handle_ioctl
+%include "fself_syscalls.inc"
 cmpqibe regs_stash+iret_rax, sysents+48*SYS_getppid, decrypt_end, handle_getppid, decrypt_end
 
 handle_getppid:
@@ -499,6 +662,7 @@ memcpy_from_offset regs_for_exit, iret_frame+24, syscall_rsp_to_regs_stash, iret
 ; handle kekcalls
 if_equal cmpdibe, regs_for_exit+iret_rax+4, 1, handle_kekcall_read_dbregs
 if_equal cmpdibe, regs_for_exit+iret_rax+4, 2, handle_kekcall_write_dbregs
+if_equal cmpdibe, regs_for_exit+iret_rax+4, 0x42, handle_kekcall_debug
 
 ; call real getppid. the register is already decrypted, so just fall through
 times iret_rip db 0
@@ -593,6 +757,19 @@ dq pop_all_iret
 dq 0x20
 dq 2
 dq decrypt_end
+dq 0
+
+handle_kekcall_debug:
+subq regs_for_exit+iret_rdi, regs_for_exit+iret_rdi, regs_for_exit+iret_rsi
+memcpy_offset regs_stash+iret_rdi, td_retval, regs_for_exit+iret_rdi, 8
+pokeq iret_frame, syscall_after
+pokeq0 regs_stash+iret_rax, 0, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq decrypt_end
+dq 0
+.tmp:
 dq 0
 
 restore_dbregs_after_syscall:
@@ -765,6 +942,8 @@ write_dbgregs_lr:
 dq 0
 dq 0
 
+%include "fself.inc"
+
 section .data.qword
 
 dbgregs:
@@ -794,12 +973,72 @@ db ((($-comparison_table)/256 - ($-comparison_table) % 256 + 256) / 256 + (($-co
 %endrep
 
 ; pseudocode:
+; and_table[a][b] = a & b
+section .data.align16
+align 65536
+and_table:
+%rep 65536
+db (($-and_table)/256) & (($-and_table) % 256)
+%endrep
+
+; pseudocode:
 ; or_table[a][b] = a | b
 section .data.align16
 align 65536
 or_table:
 %rep 65536
 db (($-or_table)/256) | (($-or_table) % 256)
+%endrep
+
+; pseudocode:
+; add_table[a][b] = a + b
+; carry_table[a][b] = (a + b) / 256
+section .data.align16
+align 65536
+addition_table:
+%rep 65536
+db ((($-addition_table)/256) + ($-addition_table) % 256) % 256
+%endrep
+carry_table:
+%rep 65536
+db ((($-carry_table)/256) + ($-carry_table) % 256) / 256
+%endrep
+
+; pseudocode:
+; mul32_table[x] = x * 32
+; mul32_carry[x] = x / 8
+section .data.align8
+align 256
+mul32_table:
+%rep 256
+db (($ - mul32_table) * 32) % 256
+%endrep
+mul32_carry:
+%rep 256
+db ($ - mul32_carry) / 8
+%endrep
+
+; pseudocode:
+; mul56_table[x] = x * 56
+; mul56_carry[x] = x * 7 / 32
+section .data.align8
+align 256
+mul56_table:
+%rep 256
+db (($ - mul56_table) * 56) % 256
+%endrep
+mul56_carry:
+%rep 256
+db ($ - mul56_carry) * 7 / 32
+%endrep
+
+; pseudocode
+; not_table[x] = ~x
+section .data.align8
+align 256
+not_table:
+%rep 256
+db (not_table + 255) - $
 %endrep
 
 section .data.log

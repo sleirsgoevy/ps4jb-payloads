@@ -35,6 +35,7 @@ uint64_t r0gdb_rdmsr(uint32_t ecx);
 void r0gdb_wrmsr(uint32_t ecx, uint64_t value);
 
 //netcat captured trace to specified ip & port
+int r0gdb_open_socket(const char* ipaddr, int port);
 int r0gdb_trace_send(const char* ipaddr, int port);
 
 //clear captured trace

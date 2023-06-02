@@ -138,52 +138,82 @@ void* load_kelf(void* ehdr, const char** symbols, uint64_t* values, void** entry
     return kptr;
 }
 
-asm("kek:\n.incbin \"kek\"\nkek_end:");
+asm(".section .data\nkek:\n.incbin \"kek\"\nkek_end:");
 extern char kek[];
 extern char kek_end[];
+
+asm(".section .text\nkekcall:\nmov 8(%rsp), %rax\njmp *p_kekcall(%rip)");
+
+int kekcall(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f, uint64_t nr);
+
+#define KEKCALL_GETPPID  0x000000027
+#define KEKCALL_READ_DR  0x100000027
+#define KEKCALL_WRITE_DR 0x200000027
+
+void* p_kekcall;
+void* dlsym(void*, const char*);
+
+void* malloc(size_t sz)
+{
+    return mmap(0, sz, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+}
 
 int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
     r0gdb_init(ds, a, b, c, d);
     dbg_enter();
-    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"allocating userspace memory... ", (uintptr_t)31);
-    char* mem = mmap(0, kek_end-kek, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
-    mlock(mem, kek_end-kek);
-    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\nallocating kernel memory... ", (uintptr_t)33);
+    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"allocating kernel memory... ", (uintptr_t)28);
     for(int i = 0; i < 8; i += 2)
     {
-        mem_blocks[i] = r0gdb_kmalloc(1<<24);
+        while(!mem_blocks[i])
+            mem_blocks[i] = r0gdb_kmalloc(1<<24);
         mem_blocks[i+1] = (mem_blocks[i] ? mem_blocks[i] + (1<<24) : 0);
     }
     char* scratchpad = kmalloc(1048576);
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
+    volatile int zero = 0; //hack to force runtime calculation of string pointers
     const char* symbols[] = {
-        "add_rsp_iret",
-        "copyin",
-        "copyout",
-        "doreti_iret",
-        "dr2gpr_end",
-        "dr2gpr_start",
-        "gpr2dr_1_end",
-        "gpr2dr_1_start",
-        "gpr2dr_2_end",
-        "gpr2dr_2_start",
-        "kdata_base",
-        "pop_all_except_rdi_iret",
-        "pop_all_iret",
-        "push_pop_all_iret",
-        "rep_movsb_pop_rbp_ret",
-        "scratchpad",
-        "soo_ioctl",
-        "syscall_after",
-        "syscall_before",
-        "sysents",
+        "add_rsp_iret"+zero,
+        "copyin"+zero,
+        "copyout"+zero,
+        "decryptSelfBlock_epilogue"+zero,
+        "decryptSelfBlock_watchpoint"+zero,
+        "decryptSelfBlock_watchpoint_lr"+zero,
+        "doreti_iret"+zero,
+        "dr2gpr_end"+zero,
+        "dr2gpr_start"+zero,
+        "gpr2dr_1_end"+zero,
+        "gpr2dr_1_start"+zero,
+        "gpr2dr_2_end"+zero,
+        "gpr2dr_2_start"+zero,
+        "kdata_base"+zero,
+        "loadSelfSegment_epilogue"+zero,
+        "loadSelfSegment_watchpoint"+zero,
+        "loadSelfSegment_watchpoint_lr"+zero,
+        "mini_syscore_header"+zero,
+        "pop_all_except_rdi_iret"+zero,
+        "pop_all_iret"+zero,
+        "push_pop_all_iret"+zero,
+        "rep_movsb_pop_rbp_ret"+zero,
+        "sceSblServiceIsLoadable2"+zero,
+        "sceSblServiceMailbox"+zero,
+        "sceSblServiceMailbox_lr_decryptSelfBlock"+zero,
+        "sceSblServiceMailbox_lr_loadSelfSegment"+zero,
+        "sceSblServiceMailbox_lr_verifyHeader"+zero,
+        "scratchpad"+zero,
+        "soo_ioctl"+zero,
+        "syscall_after"+zero,
+        "syscall_before"+zero,
+        "sysents"+zero,
         0,
     };
     uint64_t values[] = {
         kdata_base - 0x9cf853, // add_rsp_iret
         kdata_base - 0x9908e0, // copyin
         kdata_base - 0x990990, // copyout
+        kdata_base - 0x8a52c3, // decryptSelfBlock_epilogue
+        kdata_base - 0x2cc88e, // decryptSelfBlock_watchpoint
+        kdata_base - 0x8a538a, // decryptSelfBlock_watchpoint_lr
         kdata_base - 0x9cf84c, // doreti_iret
         kdata_base - 0x9d6d7c, // dr2gpr_end
         kdata_base - 0x9d6d93, // dr2gpr_start
@@ -192,10 +222,19 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kdata_base - 0x9d6de9, // gpr2dr_2_end
         kdata_base - 0x9d6b87, // gpr2dr_2_start
         kdata_base,            // kdata_base
+        kdata_base - 0x8a54cd, // loadSelfSegment_epilogue
+        kdata_base - 0x2cc918, // loadSelfSegment_watchpoint
+        kdata_base - 0x8a5727, // loadSelfSegment_watchpoint_lr
+        kdata_base + 0xdc16e8, // mini_syscore_header
         kdata_base - 0x9cf8a7, // pop_all_except_rdi_iret
         kdata_base - 0x9cf8ab, // pop_all_iret
         kdata_base - 0x96be70, // push_pop_all_iret
         kdata_base - 0x990a55, // rep_movsb_pop_rbp_ret
+        kdata_base - 0x8a5c40, // sceSblServiceIsLoadable2
+        kdata_base - 0x6824c0, // sceSblServiceMailbox
+        kdata_base - 0x8a5014, // sceSblServiceMailbox_lr_decryptSelfBlock
+        kdata_base - 0x8a5541, // sceSblServiceMailbox_lr_loadSelfSegment
+        kdata_base - 0x8a58bc, // sceSblServiceMailbox_lr_verifyHeader
         (uint64_t)scratchpad,  // scratchpad
         kdata_base - 0x96eb98, // soo_ioctl
         kdata_base - 0x8022ee, // syscall_after
@@ -203,9 +242,6 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kdata_base + 0x1709c0, // sysents
         0,
     };
-    char* p_mem = mem;
-    for(char* p_kek = kek; p_kek != kek_end; p_kek++)
-        *p_mem++ = *p_kek;
     uint64_t kelf_bases[NCPUS];
     for(int cpu = 0; cpu < NCPUS; cpu++)
     {
@@ -223,7 +259,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
             gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)buf, (uintptr_t)17);
         }
         void* entry = 0;
-        char* kelf = load_kelf(mem, symbols, values, &entry);
+        char* kelf = load_kelf(kek, symbols, values, &entry);
         kelf_bases[cpu] = (uint64_t)kelf;
         kmemcpy((char*)IDT+16*13, (char*)entry, 2);
         kmemcpy((char*)IDT+16*13+6, (char*)entry+2, 6);
@@ -235,6 +271,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"patching sysentvec... ", (uintptr_t)22);
     copyin(kdata_base + 0xd11bb8 + 14, &(const uint16_t[1]){0xdeb7}, 2);
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
+    p_kekcall = (char*)dlsym((void*)0x2001, "getpid") + 7;
     asm volatile("ud2");
     return 0;
 }

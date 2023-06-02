@@ -26,3 +26,9 @@
 
 %define syscall_rsp_to_rsi 0x88
 %define syscall_rsp_to_regs_stash 0x110
+
+%define sceSblServiceMailbox_decryptSelfBlock_rsp_to_self_context 0x118
+%define sceSblServiceMailbox_decryptSelfBlock_rsp_to_target_va 0x10
+%define sceSblServiceMailbox_decryptSelfBlock_rsp_to_rbp 0x120
+
+%define mini_syscore_header_size 0x6a0
