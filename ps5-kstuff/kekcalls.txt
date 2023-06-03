@@ -6,3 +6,4 @@ Calls:
 * rax = 0x000000027 -> real getppid
 * rax = 0x100000027, rdi = X -> copy dr0-dr3 and dr6-dr7 to user address X
 * rax = 0x200000027, rdi = X -> copy dr0-dr3 and dr6-dr7 from user address X
+* rax = 0x300000027, rdi = X -> returns rdmsr(X)

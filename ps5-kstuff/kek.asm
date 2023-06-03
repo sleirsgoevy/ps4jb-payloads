@@ -15,9 +15,12 @@ extern gpr2dr_1_start
 extern gpr2dr_1_end
 extern gpr2dr_2_start
 extern gpr2dr_2_end
+extern rdmsr_start
+extern rdmsr_end
 extern scratchpad
 extern copyin
 extern copyout
+extern pcpu
 
 ; global variables break the loader
 ;global log_area
@@ -469,6 +472,30 @@ dq 0
 %%end_macro:
 %endmacro
 
+; read_msr dst, which
+%macro read_msr 2
+memcpy read_msr_rcx, (%2), 8
+pokeq read_msr_ret+iret_rdi, (%1)
+pokeq0 read_msr_lr, %%return, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq read_msr_fn
+dq 0
+%%return:
+%endmacro
+
+; set_pcb_dbregs
+%macro set_pcb_dbregs 0
+pokeq0 set_pcb_dbregs_lr, %%end_macro, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq set_pcb_dbregs_fn
+dq 0
+%%end_macro:
+%endmacro
+
 ; addbc out, left, right, carry_out
 %macro addbc 4
 memcpy %%poke1+iret_rsi, (%2), 1
@@ -605,6 +632,7 @@ on_rip doreti_iret, handle_broken_iret
 on_rip dr2gpr_end, read_dbgregs_ret
 on_rip gpr2dr_1_end, write_dbgregs_ret1
 on_rip gpr2dr_2_end, write_dbgregs_ret2
+on_rip rdmsr_end, read_msr_ret
 on_rip soo_ioctl, handle_soo_ioctl
 
 on_rip 0xde00ad0000000001, handle_kekcall_write_dbregs_after_copyout
@@ -662,6 +690,7 @@ memcpy_from_offset regs_for_exit, iret_frame+24, syscall_rsp_to_regs_stash, iret
 ; handle kekcalls
 if_equal cmpdibe, regs_for_exit+iret_rax+4, 1, handle_kekcall_read_dbregs
 if_equal cmpdibe, regs_for_exit+iret_rax+4, 2, handle_kekcall_write_dbregs
+if_equal cmpdibe, regs_for_exit+iret_rax+4, 3, handle_kekcall_rdmsr
 if_equal cmpdibe, regs_for_exit+iret_rax+4, 0x42, handle_kekcall_debug
 
 ; call real getppid. the register is already decrypted, so just fall through
@@ -704,7 +733,7 @@ handle_kekcall_write_dbregs:
 ; set syscall return value to 0
 memcpy_offset regs_stash+iret_rdi, td_retval, zero, 8
 ; save the thread pointer into the spare 7th slot
-memcpy dbgreg_copyout_frame_dbgregs+48, regs_stash+iret_rdi, 8
+;memcpy dbgreg_copyout_frame_dbgregs+48, regs_stash+iret_rdi, 8
 ; rdi = source, from userspace
 memcpy regs_stash+iret_rdi, regs_for_exit+iret_rdi, 8
 ; rdx = count, fixed
@@ -735,21 +764,8 @@ if_not_equal cmpdibe, regs_stash+iret_rax, 0, .copyin_failed
 ; write debug registers
 memcpy dbgregs, dbgreg_copyout_frame_dbgregs, 48
 write_dbgregs
-; get td_pcb
-memcpy_from_offset dbgreg_copyout_frame_dbgregs+48, dbgreg_copyout_frame_dbgregs+48, td_pcb, 8
-; get pcb_flags pointer
-ptr_add_imm .peek+iret_rsi, dbgreg_copyout_frame_dbgregs+48, pcb_flags
-memcpy .poke+iret_rdi, .peek+iret_rsi, 8
-; set PCB_DBREGS (2)
-section .data.byte
-.tmp:
-db 0
-section .text
-.peek:
-memcpy .tmp, 0, 1
-orbi .tmp, 2
-.poke:
-memcpy 0, .tmp, 1
+; this thread is now using debug registers
+set_pcb_dbregs
 ; done, now return
 .copyin_failed:
 pokeq0 iret_frame, syscall_after, doreti_iret
@@ -758,6 +774,21 @@ dq 0x20
 dq 2
 dq decrypt_end
 dq 0
+
+handle_kekcall_rdmsr:
+read_msr .return, regs_for_exit+iret_rdi
+memcpy_offset regs_stash+iret_rdi, td_retval, .return, 8
+memcpy regs_stash+iret_rax, zero, 8
+pokeq0 iret_frame, syscall_after, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq decrypt_end
+dq 0
+section .data.qword
+.return:
+dq 0
+section .text
 
 handle_kekcall_debug:
 subq regs_for_exit+iret_rdi, regs_for_exit+iret_rdi, regs_for_exit+iret_rsi
@@ -803,21 +834,8 @@ push_stack dbgreg_copyout_frame, dbgreg_copyout_frame_dbgregs-dbgreg_copyout_fra
 ; load modified debug registers
 memcpy dbgregs, dbgregs_for_ioctl, 48
 write_dbgregs
-; get td_pcb
-memcpy_from_offset dbgreg_copyout_frame_dbgregs+48, regs_stash+iret_rdi, td_pcb, 8
-; get pcb_flags pointer
-ptr_add_imm .peek+iret_rsi, dbgreg_copyout_frame_dbgregs+48, pcb_flags
-memcpy .poke+iret_rdi, .peek+iret_rsi, 8
-; set PCB_DBREGS (2)
-section .data.byte
-.tmp:
-db 0
-section .text
-.peek:
-memcpy .tmp, 0, 1
-orbi .tmp, 2
-.poke:
-memcpy 0, .tmp, 1
+; this thread is now using debug registers
+set_pcb_dbregs
 ; call the original syscall
 memcpy0 iret_frame, sysents+48*SYS_ioctl+8, 8, doreti_iret
 dq pop_all_iret
@@ -825,6 +843,10 @@ dq 0x20
 dq 2
 dq decrypt_end
 dq 0
+.msr_gs_base:
+dq 0xc0000101
+the_pcpu:
+dq pcpu
 
 handle_soo_ioctl:
 ; check if we should override this call
@@ -939,6 +961,56 @@ dq pop_all_iret
 dq 0x20
 dq 2
 write_dbgregs_lr:
+dq 0
+dq 0
+
+read_msr_fn:
+memcpy regs_for_exit, regs_stash, iret_rip
+memcpy regs_for_exit+iret_rip, iret_frame, 40
+times iret_rcx db 0
+read_msr_rcx:
+times (iret_r8-iret_rcx) db 0
+dq 0xdeadbeefdeadbeef
+times (iret_rip-iret_r8-8) db 0
+dq rdmsr_start
+dq 0x20
+dq 2
+dq 0
+dq 0
+read_msr_ret:
+memcpy 0, regs_stash+iret_rax, 8
+memcpy regs_stash, regs_for_exit, iret_rip
+memcpy0 iret_frame, regs_for_exit+iret_rip, 40, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+read_msr_lr:
+dq 0
+dq 0
+
+set_pcb_dbregs_fn:
+; get td_pcb
+memcpy_from_offset .td_pcb, pcpu, td_pcb, 8
+; get pcb_flags pointer
+ptr_add_imm .peek+iret_rsi, .td_pcb, pcb_flags
+memcpy .poke+iret_rdi, .peek+iret_rsi, 8
+; set PCB_DBREGS (2)
+section .data.byte
+.tmp:
+db 0
+section .data.qword
+.td_pcb:
+dq 0
+section .text
+.peek:
+memcpy .tmp, 0, 1
+orbi .tmp, 2
+.poke:
+memcpy0 0, .tmp, 1, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+set_pcb_dbregs_lr:
 dq 0
 dq 0
 

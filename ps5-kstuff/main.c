@@ -52,6 +52,7 @@ static void* kmalloc(size_t sz)
 #define NCPUS 16
 #define IDT (kdata_base+0x64cdc80)
 #define TSS(i) (kdata_base+0x64d0830+0x68*(i))
+#define PCPU(i) (kdata_base+0x64d2280+0x900*(i))
 
 size_t virt2file(uint64_t* phdr, uint16_t phnum, uintptr_t addr)
 {
@@ -121,15 +122,18 @@ void* load_kelf(void* ehdr, const char** symbols, uint64_t* values, void** entry
         {
             uint64_t* sym = symtab + 3 * (oia[1] >> 32);
             const char* name = strtab + (uint32_t)sym[0];
-            if(!sym[1])
+            uint64_t value = sym[1];
+            if(!value)
             {
                 for(size_t i = 0; symbols[i]; i++)
                     if(!strcmp(symbols[i], name))
-                        sym[1] = values[i];
-                if(!sym[1])
+                        sym[1] = value = values[i];
+                    else if(symbols[i][0] == '.' && !strcmp(symbols[i]+1, name))
+                        value = values[i];
+                if(!value)
                     asm volatile("ud2");
             }
-            kpoke64(kptr+oia[0], oia[2]+sym[1]);
+            kpoke64(kptr+oia[0], oia[2]+value);
         }
         else if((uint32_t)oia[1] == 8)
             kpoke64(kptr+oia[0], (uint64_t)(kptr+oia[2]));
@@ -191,9 +195,12 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         "loadSelfSegment_watchpoint"+zero,
         "loadSelfSegment_watchpoint_lr"+zero,
         "mini_syscore_header"+zero,
+        ".pcpu"+zero,
         "pop_all_except_rdi_iret"+zero,
         "pop_all_iret"+zero,
         "push_pop_all_iret"+zero,
+        "rdmsr_end"+zero,
+        "rdmsr_start"+zero,
         "rep_movsb_pop_rbp_ret"+zero,
         "sceSblServiceIsLoadable2"+zero,
         "sceSblServiceMailbox"+zero,
@@ -226,9 +233,12 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kdata_base - 0x2cc918, // loadSelfSegment_watchpoint
         kdata_base - 0x8a5727, // loadSelfSegment_watchpoint_lr
         kdata_base + 0xdc16e8, // mini_syscore_header
+        0x1234,                // .pcpu
         kdata_base - 0x9cf8a7, // pop_all_except_rdi_iret
         kdata_base - 0x9cf8ab, // pop_all_iret
         kdata_base - 0x96be70, // push_pop_all_iret
+        kdata_base - 0x9d6cf9, // rdmsr_end
+        kdata_base - 0x9d6d02, // rdmsr_start
         kdata_base - 0x990a55, // rep_movsb_pop_rbp_ret
         kdata_base - 0x8a5c40, // sceSblServiceIsLoadable2
         kdata_base - 0x6824c0, // sceSblServiceMailbox
@@ -242,6 +252,8 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kdata_base + 0x1709c0, // sysents
         0,
     };
+    size_t pcpu_idx;
+    for(pcpu_idx = 0; values[pcpu_idx] != 0x1234; pcpu_idx++);
     uint64_t kelf_bases[NCPUS];
     for(int cpu = 0; cpu < NCPUS; cpu++)
     {
@@ -258,6 +270,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
             buf[16] = '\n';
             gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)buf, (uintptr_t)17);
         }
+        values[pcpu_idx] = PCPU(cpu);
         void* entry = 0;
         char* kelf = load_kelf(kek, symbols, values, &entry);
         kelf_bases[cpu] = (uint64_t)kelf;

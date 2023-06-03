@@ -73,21 +73,8 @@ push_stack dbgreg_copyout_frame, dbgreg_copyout_frame_dbgregs-dbgreg_copyout_fra
 ; load modified debug registers
 memcpy dbgregs, dbgregs_for_dynlib_load_prx, 48
 write_dbgregs
-; get td_pcb
-memcpy_from_offset dbgreg_copyout_frame_dbgregs+48, regs_stash+iret_rdi, td_pcb, 8
-; get pcb_flags pointer
-ptr_add_imm .peek+iret_rsi, dbgreg_copyout_frame_dbgregs+48, pcb_flags
-memcpy .poke+iret_rdi, .peek+iret_rsi, 8
-; set PCB_DBREGS (2)
-section .data.byte
-.tmp:
-db 0
-section .text
-.peek:
-memcpy .tmp, 0, 1
-orbi .tmp, 2
-.poke:
-memcpy 0, .tmp, 1
+; this thread is now using debug registers
+set_pcb_dbregs
 ; call the original syscall
 memcpy0 iret_frame, sysents+48*SYS_dynlib_load_prx+8, 8, doreti_iret
 dq pop_all_iret
@@ -181,6 +168,8 @@ read_dbgregs
 memcpy parasite_dbgregs, dbgregs, 48
 memcpy dbgregs, dbgregs_for_loadSelfSegment, 48
 write_dbgregs
+; this thread is now using debug registers
+set_pcb_dbregs
 push_stack parasite_push, parasite_push_end-parasite_push
 times iret_rip db 0
 dq pop_all_iret
@@ -258,6 +247,8 @@ pop_stack parasite_push, parasite_dbgregs-parasite_push
 push_stack parasite_push, parasite_push_end-parasite_push
 memcpy dbgregs, dbgregs_for_decryptSelfBlock, 48
 write_dbgregs
+; this thread is now using debug registers
+set_pcb_dbregs
 times iret_rip db 0
 dq pop_all_iret
 dq 0x20
