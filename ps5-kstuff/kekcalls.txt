@@ -1,6 +1,6 @@
 kekcall ABI
 
-The entrypoint is the syscall instruction at `getppid+0x0a` in libkernel.
+The recommended entrypoint is the syscall instruction at `getppid+0x0a` in libkernel, although in practice any syscall instruction in libkernel can be used.
 
 Calls:
 * rax = 0x000000027 -> real getppid

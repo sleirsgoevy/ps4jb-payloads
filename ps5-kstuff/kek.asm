@@ -237,6 +237,24 @@ cmpdbe (%1), (%2), (%3), %%next_check, (%5)
 cmpdbe (%1)+4, (%2)+4, (%3), (%4), (%5)
 %endmacro
 
+; cmpwi ptr1, imm, is_less, is_equal, is_greater
+%macro cmpwi 5
+cmpw (%1), %%value, (%3), (%4), (%5)
+section .data.word
+%%value:
+dw (%2)
+section .text
+%endmacro
+
+; cmpwibe ptr1, imm, is_less, is_equal, is_greater
+%macro cmpwibe 5
+cmpwbe (%1), %%value, (%3), (%4), (%5)
+section .data.word
+%%value:
+dw (%2)
+section .text
+%endmacro
+
 ; cmpdi ptr1, imm, is_less, is_equal, is_greater
 %macro cmpdi 5
 cmpd (%1), %%value, (%3), (%4), (%5)

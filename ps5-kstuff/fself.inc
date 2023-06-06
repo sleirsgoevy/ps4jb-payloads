@@ -56,7 +56,7 @@ dq 0
 %%end_macro:
 %endmacro
 
-handle_dynlib_load_prx:
+handle_fself_syscall:
 ; fix up rsi for the original syscall
 ptr_add_imm regs_stash+iret_rsi, iret_frame+24, syscall_rsp_to_rsi
 ; read and save current debug registers
@@ -71,25 +71,79 @@ memcpy dbgreg_copyout_frame_rsp, iret_frame+24, 8
 ; push the rest of the stack frame
 push_stack dbgreg_copyout_frame, dbgreg_copyout_frame_dbgregs-dbgreg_copyout_frame
 ; load modified debug registers
-memcpy dbgregs, dbgregs_for_dynlib_load_prx, 48
+memcpy dbgregs, dbgregs_for_fself_syscall, 48
 write_dbgregs
 ; this thread is now using debug registers
 set_pcb_dbregs
 ; call the original syscall
-memcpy0 iret_frame, sysents+48*SYS_dynlib_load_prx+8, 8, doreti_iret
+memcpy_from_offset iret_frame, regs_stash+iret_rax, 8, 8
+times iret_rip db 0
 dq pop_all_iret
 dq 0x20
 dq 2
 dq decrypt_end
 dq 0
 
-dbgregs_for_dynlib_load_prx:
+dbgregs_for_fself_syscall:
 dq sceSblServiceMailbox
 dq sceSblServiceIsLoadable2
 dq 0
 dq 0
 dq 0
 dq 0x405
+
+;dbgregs_for_execve:
+;dq sceSblServiceIsLoadable2
+;dq kdata_base - 0x2cd321
+;dq 0
+;dq 0
+;dq 0
+;dq 0x405
+;
+;handle_2cd321:
+;memcpy .peek+iret_rsi, regs_stash+iret_r14, 8
+;.peek:
+;memcpy file_header, 0, 0x88
+;pokeq iret_frame, 0xffff0000
+;log_word file_header
+;pokeq iret_frame, 0xffff0008
+;log_word file_header+8
+;pokeq iret_frame, 0xffff0010
+;log_word file_header+16
+;pokeq iret_frame, 0xffff0018
+;log_word file_header+24
+;pokeq iret_frame, 0xffff0020
+;log_word file_header+32
+;pokeq iret_frame, 0xffff0028
+;log_word file_header+40
+;pokeq iret_frame, 0xffff0030
+;log_word file_header+48
+;pokeq iret_frame, 0xffff0038
+;log_word file_header+56
+;pokeq iret_frame, 0xffff0040
+;log_word file_header+64
+;pokeq iret_frame, 0xffff0048
+;log_word file_header+72
+;pokeq iret_frame, 0xffff0050
+;log_word file_header+80
+;pokeq iret_frame, 0xffff0058
+;log_word file_header+88
+;pokeq iret_frame, 0xffff0060
+;log_word file_header+96
+;pokeq iret_frame, 0xffff0068
+;log_word file_header+104
+;pokeq iret_frame, 0xffff0070
+;log_word file_header+112
+;pokeq iret_frame, 0xffff0078
+;log_word file_header+120
+;pokeq iret_frame, 0xffff0080
+;log_word file_header+128
+;pokeq0 iret_frame, kdata_base - 0x2cd321, doreti_iret
+;dq pop_all_iret
+;dq 0x20
+;dq 2
+;dq decrypt_end
+;dq 0
 
 handle_sceSblServiceMailbox:
 memcpy .stack_peek+iret_rsi, iret_frame+24, 8
@@ -146,8 +200,17 @@ if_not_equal cmpqibe, self_paid, 1, decrypt_end
 memcpy_offset regs_stash+iret_rdi, 0x3e, .death, 2
 pop_stack iret_frame, 8
 pokeq regs_stash+iret_rax, 0
-memcpy .poke+iret_rdi, regs_stash+iret_r8, 8
-.poke:
+memcpy .poke1+iret_rdi, regs_stash+iret_r8, 8
+memcpy .poke2+iret_rdi, regs_stash+iret_r8, 8
+if_equal cmpwibe, elf_e_type, 0xfe18, .poke2
+.poke1:
+memcpy0 0, s_auth_info_for_exec, s_auth_info_for_exec_end-s_auth_info_for_exec, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq decrypt_end
+dq 0
+.poke2:
 memcpy0 0, s_auth_info_for_dynlib, s_auth_info_for_dynlib_end-s_auth_info_for_dynlib, doreti_iret
 dq pop_all_iret
 dq 0x20
@@ -264,14 +327,21 @@ dq 0
 dq 0
 dq 0x405
 
+s_auth_info_for_exec:
+dq 0x4400001084c2052d, 0x2000038000000000, 0x000000000000ff00, 0x0000000000000000, 0x0000000000000000, 0x4000400040000000, 0x4000000000000000, 0x0080000000000002, 0xf0000000ffff4000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000
+s_auth_info_for_exec_end:
+
 s_auth_info_for_dynlib:
-dq 0x4900000000000002, 0x0, 0x800000000000ff00, 0x0, 0x0, 0x7000700080000000, 0x8000000000000000, 0x0, 0xf0000000ffff4000, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0
+dq 0x4900000000000002, 0x0000000000000000, 0x800000000000ff00, 0x0000000000000000, 0x0000000000000000, 0x7000700080000000, 0x8000000000000000, 0x0000000000000000, 0xf0000000ffff4000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000
 s_auth_info_for_dynlib_end:
 
 file_header:
 times 8 db 0
 self_paid:
-times 120 db 0
+times 40 db 0
+elf_e_type:
+times 80 db 0
+dq 0
 
 align 16
 fself_header_stack_push:

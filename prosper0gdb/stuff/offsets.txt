@@ -20,6 +20,9 @@ p/x $malloc = kdata_base - 0xa9b00
 p/x $M_something = kdata_base + 0x1346080
 p/x $cpu_switch = kdata_base - 0x9d6f80
 
+p/x $printf = kdata_base - 0x972588
+p/x $panic = kdata_base - 0x21020
+
 # 6 instructions
 p/x $cpu_switch_dr2gpr = kdata_base - 0x9d6d93
 
