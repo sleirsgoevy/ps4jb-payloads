@@ -53,6 +53,9 @@ void* mmap20(void* addr, size_t sz, int prot, int flags, int fd, off_t offset);
 struct sigaction;
 int sigaction20(int sig, const struct sigaction* neww, struct sigaction* oldd);
 
+//get_self_auth_info that works
+int get_self_auth_info_20(const char* path, void* buf);
+
 //kernel function call
 uint64_t r0gdb_kfncall(uint64_t kfn, ...);
 

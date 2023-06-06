@@ -693,6 +693,46 @@ int sigaction20(int sig, const struct sigaction* neww, struct sigaction* oldd)
     return ans;
 }
 
+static uint64_t dumped_auth_info[17];
+static int authinfo_dumped = 0;
+
+static void filter_dump_authinfo(uint64_t* regs)
+{
+    static uint64_t lr;
+    static uint64_t r8;
+    SKIP_SCHEDULER
+    if(regs[0] == kdata_base - 0x8a5c40) //sceSblAuthMgrIsLoadable2
+    {
+        kmemcpy(&lr, (void*)regs[3], 8);
+        r8 = regs[13];
+    }
+    else if(regs[0] == lr)
+    {
+        lr = 0;
+        kmemcpy(dumped_auth_info, (void*)r8, sizeof(dumped_auth_info));
+        authinfo_dumped = 1;
+    }
+}
+
+int get_self_auth_info_20(const char* path, void* buf)
+{
+    r0gdb_instrument(0);
+    int(*p_get_self_auth_info)(const char* path, void* buf) = dlsym((void*)0x2001, "get_self_auth_info");
+    trace_prog = filter_dump_authinfo;
+    authinfo_dumped = 0;
+    set_trace();
+    int ans = p_get_self_auth_info(path, buf);
+    if(ans)
+        return ans;
+    if(!authinfo_dumped)
+        return -1;
+    char* dst = buf;
+    char* src = (void*)dumped_auth_info;
+    for(size_t i = 0; i < 0x88; i++)
+        dst[i] = src[i];
+    return 0;
+}
+
 static uint64_t fncall_fn = 0;
 static uint64_t fncall_args[6];
 static uint64_t fncall_ans = 0;

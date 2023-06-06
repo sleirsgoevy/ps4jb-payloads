@@ -18,6 +18,7 @@ memcpy .seek2+iret_rsi, file_header+56, 8
 .copy2:
 memcpy file_header, 0, 32
 memcpy file_header+26, zero, 6
+memcpy self_n_entries, file_header+24, 8
 mulq32 .seek1+iret_rcx, file_header+24
 .seek1:
 memcpy0 scratchpad, 0, 0, doreti_iret
@@ -33,6 +34,7 @@ andbi .seek2+iret_rcx, 0xf0
 .seek2:
 memcpy0 scratchpad, 0, 0, doreti_iret
 save_reg .copy4+iret_rsi, iret_rsi
+memcpy self_ex_header, .copy4+iret_rsi, 8
 .copy4:
 memcpy0 file_header, 0, 16, doreti_iret
 dq pop_all_iret
@@ -43,6 +45,10 @@ dq 0
 dq 0
 num47:
 dq 47
+self_n_entries:
+dq 0
+self_ex_header:
+dq 0
 
 ; load_self_paid p_ctx
 %macro load_self_paid 1
@@ -202,7 +208,18 @@ pop_stack iret_frame, 8
 pokeq regs_stash+iret_rax, 0
 memcpy .poke1+iret_rdi, regs_stash+iret_r8, 8
 memcpy .poke2+iret_rdi, regs_stash+iret_r8, 8
+memcpy .poke3+iret_rdi, regs_stash+iret_r8, 8
+; try loading auth info from the file
+mulq80 .late_entries_size, self_n_entries
+addq .ptr_signature, self_ex_header, .late_entries_size
+ptr_add_imm .sig_peek+iret_rsi, .ptr_signature, 0xc0
+.sig_peek:
+memcpy signature, 0, 0x90
+; if it is valid, stick with that
+if_equal cmpqibe, signature, 0x88, .poke3
+; otherwise, load dynlib auth info if we are an sprx
 if_equal cmpwibe, elf_e_type, 0xfe18, .poke2
+; otherwise, load exec auth info
 .poke1:
 memcpy0 0, s_auth_info_for_exec, s_auth_info_for_exec_end-s_auth_info_for_exec, doreti_iret
 dq pop_all_iret
@@ -217,9 +234,19 @@ dq 0x20
 dq 2
 dq decrypt_end
 dq 0
+.poke3:
+memcpy0 0, signature+8, 0x88, doreti_iret
+dq pop_all_iret
+dq 0x20
+dq 2
+dq decrypt_end
+dq 0
 .death:
 dq 0xdeb7
-
+.late_entries_size:
+dq 0
+.ptr_signature:
+dq 0
 handle_loadSelfSegment_parasite:
 decrypt_pointer regs_stash+iret_r10
 memcpy .peek+iret_rsi, iret_frame+24, 8
@@ -342,6 +369,9 @@ times 40 db 0
 elf_e_type:
 times 80 db 0
 dq 0
+
+signature:
+times 18 dq 0
 
 align 16
 fself_header_stack_push:

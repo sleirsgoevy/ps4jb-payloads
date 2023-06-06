@@ -8,6 +8,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <fcntl.h>
+#include <sys/uio.h>
+#include <sys/mount.h>
 
 static void infsleep(int sig)
 {
@@ -84,6 +86,39 @@ static void copy_data(int fd1, int fd2)
     ssize_t chk;
     while((chk = read(fd1, buf, sizeof(buf))) > 0)
         write(fd2, buf, chk);
+}
+
+asm("my_nmount:\nmov $378, %rax\njmp *p_kekcall(%rip)");
+void* p_kekcall;
+int my_nmount(struct iovec* iov, size_t n, int flags);
+
+void* dlsym(void*, const char*);
+
+int do_nmount(struct iovec* iov, size_t n, int flags)
+{
+    if(!p_kekcall)
+        p_kekcall = dlsym((void*)0x2001, "getppid") + 7;
+    return my_nmount(iov, n, flags);
+}
+
+int remount_rw(const char* dev, const char* mnt)
+{
+    size_t n = 0;
+    while(dev[n])
+        n++;
+    size_t m = 0;
+    while(mnt[m])
+        m++;
+    struct iovec iov[] = {
+        {"fstype", 7}, {"exfatfs", 8},
+        {"fspath", 7}, {(char*)mnt, m+1},
+        {"from", 5}, {(char*)dev, n+1},
+        {"large", 6}, {"yes", 4},
+        {"timezone", 9}, {"static", 7},
+        {"async", 6}, {0, 0},
+        {"ignoreacl", 10}, {0, 0},
+    };
+    return do_nmount(iov, 14, MNT_UPDATE);
 }
 
 int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)

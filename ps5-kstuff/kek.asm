@@ -639,6 +639,11 @@ mulqt (%1), (%2), mul32_table, mul32_carry
 mulqt (%1), (%2), mul56_table, mul56_carry
 %endmacro
 
+; mulq80 out, in
+%macro mulq80 2
+mulqt (%1), (%2), mul80_table, mul80_carry
+%endmacro
+
 prog_entry:
 
 %include "parasites.inc"
@@ -1120,6 +1125,20 @@ db (($ - mul56_table) * 56) % 256
 mul56_carry:
 %rep 256
 db ($ - mul56_carry) * 7 / 32
+%endrep
+
+; pseudocode:
+; mul80_table[x] = x * 56
+; mul80_carry[x] = x * 7 / 32
+section .data.align8
+align 256
+mul80_table:
+%rep 256
+db (($ - mul80_table) * 80) % 256
+%endrep
+mul80_carry:
+%rep 256
+db ($ - mul80_carry) * 5 / 16
 %endrep
 
 ; pseudocode
