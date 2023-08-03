@@ -10,7 +10,7 @@ r0run.o: r0run.asm
 	yasm -f elf64 r0run.asm
 
 prosper0gdb.o: r0gdb.c r0run.o
-	gcc -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -Wl,-r,--unique='*' -ffunction-sections -fdata-sections r0gdb.c r0run.o -o prosper0gdb.o -fPIE -ffreestanding
+	gcc -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -r -ffunction-sections -fdata-sections r0gdb.c r0run.o -o prosper0gdb.o -fPIE -ffreestanding
 
 payload.elf: ../lib/lib.a main.c prosper0gdb.o dbg.c 
 	gcc -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -static ../lib/lib.a main.c prosper0gdb.o dbg.c -o payload.elf -fPIE -ffreestanding -Wl,-no-pie
