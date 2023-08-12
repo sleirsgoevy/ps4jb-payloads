@@ -34,6 +34,16 @@ void r0gdb(void);
 uint64_t r0gdb_rdmsr(uint32_t ecx);
 void r0gdb_wrmsr(uint32_t ecx, uint64_t value);
 
+//debug registers r/w (after r0gdb_setup only)
+void r0gdb_read_dbregs(uint64_t* out);
+uint64_t r0gdb_read_dbreg(int which);
+void r0gdb_write_dbregs(uint64_t* out);
+void r0gdb_write_dbreg(int which, uint64_t value);
+
+//cr3 r/w (after r0gdb_setup only)
+uint64_t r0gdb_read_cr3(void);
+void r0gdb_write_cr3(uint64_t value);
+
 //netcat captured trace to specified ip & port
 int r0gdb_open_socket(const char* ipaddr, int port);
 int r0gdb_trace_send(const char* ipaddr, int port);

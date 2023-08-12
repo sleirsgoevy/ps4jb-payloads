@@ -393,16 +393,37 @@ void r0gdb_write_dbreg(int which, uint64_t value)
     r0gdb_write_dbregs(regs);
 }
 
+uint64_t r0gdb_read_cr3(void)
+{
+    struct regs regs = {0};
+    regs.rip = kdata_base - 0x39700e;
+    regs.rsp = kstack;
+    regs.eflags = 0x102;
+    run_in_kernel(&regs);
+    return regs.rdi;
+}
+
+void r0gdb_write_cr3(uint64_t cr3)
+{
+    struct regs regs = {0};
+    regs.rip = kdata_base - 0x396f9e;
+    regs.rsp = kstack;
+    regs.eflags = 0x102;
+    regs.rax = cr3;
+    run_in_kernel(&regs);
+}
+
 uint64_t trace_frame_size = 168;
 uint64_t trace_base;
 uint64_t trace_start;
 uint64_t trace_end;
 void(*trace_prog)(uint64_t*);
 extern char ret2trace[];
+static uint64_t uretframe_for_trace[5];
 
 void r0gdb_trace(size_t trace_size)
 {
-    static int tracing = 0;
+    static int tracing;
     if(!tracing)
     {
         r0gdb_setup(0);
@@ -412,8 +433,13 @@ void r0gdb_trace(size_t trace_size)
         mlock(stack, 16384);
         stack[0] = 1;
         mlock(stack, 16384);
-        uint64_t urf[5] = {(uintptr_t)ret2trace, 0x43, 2, (uintptr_t)stack+16384, 0x3b};
-        copyin(uretframe, urf, sizeof(urf));
+        /*uint64_t urf[5] = {(uintptr_t)ret2trace, 0x43, 2, (uintptr_t)stack+16384, 0x3b};
+        copyin(uretframe, urf, sizeof(urf));*/
+        uretframe_for_trace[0] = (uintptr_t)ret2trace;
+        uretframe_for_trace[1] = 0x43;
+        uretframe_for_trace[2] = 2;
+        uretframe_for_trace[3] = (uintptr_t)stack + 16384;
+        uretframe_for_trace[4] = 0x3b;
         tracing = 1;
     }
     char* tracebuf = 0;
@@ -505,8 +531,11 @@ void r0gdb_instrument(size_t size)
     instrumented = 1;
 }
 
+void kmemcpy(void* dst, const void* src, size_t sz);
+
 static void set_trace(void)
 {
+    kmemcpy((void*)uretframe, uretframe_for_trace, sizeof(uretframe_for_trace));
     uint64_t q;
     asm volatile("pop %0\npushfq\norb $1, 1(%%rsp)\npopfq\npush %0":"=r"(q));
 }
@@ -519,8 +548,6 @@ static void eat_count(uint64_t* regs)
         regs[2] &= -257;
     count--;
 }*/
-
-void kmemcpy(void* dst, const void* src, size_t sz);
 
 static void untrace_fn(uint64_t* regs)
 {
