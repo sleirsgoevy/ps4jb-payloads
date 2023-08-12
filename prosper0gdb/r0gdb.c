@@ -440,6 +440,7 @@ void r0gdb_trace(size_t trace_size)
         uretframe_for_trace[2] = 2;
         uretframe_for_trace[3] = (uintptr_t)stack + 16384;
         uretframe_for_trace[4] = 0x3b;
+        copyin(uretframe, uretframe_for_trace, sizeof(uretframe_for_trace));
         tracing = 1;
     }
     char* tracebuf = 0;
