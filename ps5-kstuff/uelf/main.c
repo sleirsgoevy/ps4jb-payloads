@@ -56,6 +56,7 @@ void handle(uint64_t* regs)
         uint64_t lr = kpeek64(regs[RSP]);
         switch(TRAP_KIND(lr))
         {
+        case TRAP_UTILS: handle_utils_trap(regs, TRAP_IDX(lr)); break;
         case TRAP_KEKCALL: handle_kekcall_trap(regs, TRAP_IDX(lr)); break;
         case TRAP_FSELF: handle_fself_trap(regs, TRAP_IDX(lr)); break;
         }
