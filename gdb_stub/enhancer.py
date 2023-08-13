@@ -1,5 +1,66 @@
 import sys
 
+class ELFAccessor:
+    def __init__(self, data):
+        data = memoryview(data)
+        phoff = int.from_bytes(data[32:40], 'little')
+        phnum = int.from_bytes(data[56:58], 'little')
+        segments = []
+        for offset in range(phoff, phoff+56*phnum, 56):
+            if data[offset:offset+4] != b'\1\0\0\0':
+                continue
+            addr = int.from_bytes(data[offset+16:offset+24], 'little')
+            fileoff = int.from_bytes(data[offset+8:offset+16], 'little')
+            filesz = int.from_bytes(data[offset+32:offset+40], 'little')
+            memsz = int.from_bytes(data[offset+40:offset+48], 'little')
+            segments.append((addr, data[fileoff:fileoff+filesz], memsz, fileoff))
+        segments.sort()
+        self.segments = []
+        for i, j, k, l in segments:
+            if not self.segments or self.segments[-1][0] + self.segments[-1][2] <= i:
+                self.segments.append((i, j, k, l))
+    def _lookup_segment(self, addr, offset=0):
+        if addr == None: return -1
+        addr += offset
+        l = -1
+        r = len(self.segments)
+        while r - l > 1:
+            m = (l + r) // 2
+            if self.segments[m][0] <= addr:
+                l = m
+            else:
+                r = m
+        if l not in range(len(self.segments)) or self.segments[l][0] + self.segments[l][2] <= addr:
+            return -1
+        return l
+    def __getitem__(self, idx):
+        if isinstance(idx, slice):
+            step = idx.step if idx.step != None else 1
+            i1 = self._lookup_segment(idx.start)
+            i2 = self._lookup_segment(idx.stop, -step)
+            if i1 != i2 or i1 < 0 or i2 < 0:
+                raise IndexError("page fault")
+            if step < 0:
+                return self[idx.stop-step:idx.start-step:step]
+            ans = bytes(self.segments[i1][1][idx.start-self.segments[i1][0]:idx.stop-self.segments[i1][0]:step])
+            ans += bytes(len(range(idx.start, idx.stop, step)) - len(ans))
+            return ans
+        return self[idx:idx+1][0]
+    def get_offset(self, start, stop):
+        i1 = self._lookup_segment(start)
+        i2 = self._lookup_segment(stop, -1)
+        if i1 != i2 or i1 < 0 or i2 < 0:
+            raise IndexError("page fault")
+        return self.segments[i1][3] + start - self.segments[i1][0]
+    def find(self, c, idx):
+        while True:
+            try: cc = self[idx:idx+len(c)]
+            except IndexError: return -1
+            if cc == c: return idx
+            idx += 1
+    def __len__(self):
+        return self.segments[-1][0] + self.segments[-1][2]
+
 nidmap = {}
 
 if len(sys.argv) >= 4:
@@ -8,7 +69,9 @@ if len(sys.argv) >= 4:
             nid, sym = l.split()
             nidmap[nid] = sym
 
-with open(sys.argv[1], 'rb') as file: data = bytearray(file.read())
+with open(sys.argv[1], 'rb') as file:
+    data0 = file.read()
+    data = bytearray(data0)
 
 def align(n):
     global data
@@ -60,7 +123,14 @@ def guess_name(flags):
         return '.rodata'
 
 dynamic = None
-sce_dynlibdata = None
+sce_dynlibdata = ELFAccessor(data0)
+sce_dynlibdata_offset = None
+
+def get_dynlibdata_offset(offset, size):
+    if sce_dynlibdata_offset != None:
+        return sce_dynlibdata_offset + offset
+    else:
+        return sce_dynlibdata.get_offset(offset, offset+size)
 
 inmem_sections = []
 inmem_segments = []
@@ -97,6 +167,7 @@ for i in range(nphdr):
     elif kind == 0x6474e550: # GNU_EH_FRAME
         eh_frame_hdr = (addr, offset, filesz)
     elif kind == 0x61000000: # SCE_DYNLIBDATA
+        sce_dynlibdata_offset = offset
         sce_dynlibdata = offset
 
 inmem_sections.sort()
@@ -237,6 +308,7 @@ if dynamic:
     assert dynamic[1] % 16 == 0
     dynsym_addr = None
     dynsym_sz = None
+    hash_addr = None
     dynstr_addr = None
     dynstr_sz = None
     reladyn_addr = None
@@ -247,44 +319,48 @@ if dynamic:
         entry = data[dynamic[0]+i:dynamic[0]+i+16]
         tag = int.from_bytes(entry[:8], 'little')
         val = int.from_bytes(entry[8:], 'little')
-        if tag == 0x61000039:
+        if tag == 0x61000039 or tag == 6:
             dynsym_addr = val
         elif tag == 0x6100003f:
             dynsym_sz = val
-        elif tag == 0x61000035:
+        elif tag == 0x61000035 or tag == 5:
             dynstr_addr = val
-        elif tag == 0x61000037:
+        elif tag == 0x61000037 or tag == 10:
             dynstr_sz = val
-        elif tag == 0x6100002f:
+        elif tag == 0x6100002f or tag == 7:
             reladyn_addr = val
-        elif tag == 0x61000031:
+        elif tag == 0x61000031 or tag == 8:
             reladyn_sz = val
-        elif tag == 0x61000029:
+        elif tag == 0x61000029 or tag == 23:
             relaplt_addr = val
-        elif tag == 0x6100002d:
+        elif tag == 0x6100002d or tag == 2:
             relaplt_sz = val
+        elif tag == 4:
+            hash_addr = val
+    if dynsym_addr != None and dynsym_sz == None and hash_addr != None:
+        dynsym_sz = 24 * int.from_bytes(sce_dynlibdata[hash_addr:hash_addr+4], 'little')
     have_dynstr = dynstr_addr != None and dynstr_sz != None
     dynsym_sect = 0
     got_slots = None
     if relaplt_addr != None and relaplt_sz != None:
-        got_slots = parse_relaplt(data[relaplt_addr+sce_dynlibdata:relaplt_addr+sce_dynlibdata+relaplt_sz])
+        got_slots = parse_relaplt(sce_dynlibdata[relaplt_addr:relaplt_addr+relaplt_sz])
     if dynsym_addr != None and dynsym_sz != None and sce_dynlibdata != None:
         dynsym_sect = nsections
-        dynsym = process_dynsym(data[dynsym_addr+sce_dynlibdata:dynsym_addr+sce_dynlibdata+dynsym_sz])
+        dynsym = process_dynsym(sce_dynlibdata[dynsym_addr:dynsym_addr+dynsym_sz])
         if have_dynstr and nidmap:
-            dynsym, dynstr = decode_nids(dynsym, data[dynstr_addr+sce_dynlibdata:dynstr_addr+sce_dynlibdata+dynstr_sz])
+            dynsym, dynstr = decode_nids(dynsym, sce_dynlibdata[dynstr_addr:dynstr_addr+dynstr_sz])
         if have_dynstr and text_offset != None and got_slots:
-            if dynstr == None: dynstr = data[dynstr_addr+sce_dynlibdata:dynstr_addr+sce_dynlibdata+dynstr_sz]
+            if dynstr == None: dynstr = sce_dynlibdata[dynstr_addr:dynstr_addr+dynstr_sz]
             dynsym, dynstr = plt_synthesise(dynsym, dynstr, data[text_offset:text_offset+text_filesz], text_addr, got_slots)
         dynsym_off, dynsym_sz = section('.dynsym', 11, 0, 0, 0, 0, nsections + 2 if have_dynstr else 0, 0, 24)
         symtab_off, symtab_sz = section('.symtab', 2, 0, 0, 0, 0, nsections + 2 if have_dynstr else 0, 0, 24)
     if have_dynstr and sce_dynlibdata != None:
-        dynstr_off, dynstr_siz = section('.dynstr', 3, 0, 0, dynstr_addr + sce_dynlibdata, dynstr_sz, 0, 0, 0)
-        strtab_off, strtab_siz = section('.strtab', 3, 0, 0, dynstr_addr + sce_dynlibdata, dynstr_sz, 0, 0, 0)
+        dynstr_off, dynstr_siz = section('.dynstr', 3, 0, 0, get_dynlibdata_offset(dynstr_addr, dynstr_sz), dynstr_sz, 0, 0, 0)
+        strtab_off, strtab_siz = section('.strtab', 3, 0, 0, get_dynlibdata_offset(dynstr_addr, dynstr_sz), dynstr_sz, 0, 0, 0)
     if reladyn_addr != None and reladyn_sz != None and sce_dynlibdata != None:
-        section('.rela.dyn', 4, 0, 0, reladyn_addr + sce_dynlibdata, reladyn_sz, dynsym_sect, 0, 24)
+        section('.rela.dyn', 4, 0, 0, get_dynlibdata_offset(reladyn_addr, reladyn_sz), reladyn_sz, dynsym_sect, 0, 24)
     if relaplt_addr != None and relaplt_sz != None and sce_dynlibdata != None:
-        section('.rela.plt', 4, 0, 0, relaplt_addr + sce_dynlibdata, relaplt_sz, dynsym_sect, 0, 24)
+        section('.rela.plt', 4, 0, 0, get_dynlibdata_offset(relaplt_addr, relaplt_sz), relaplt_sz, dynsym_sect, 0, 24)
 
 if eh_frame_hdr != None:
     ef_start, ef_some_entry = efh_parse(data, eh_frame_hdr[1], eh_frame_hdr[1] + eh_frame_hdr[2], eh_frame_hdr[0] - eh_frame_hdr[1])
