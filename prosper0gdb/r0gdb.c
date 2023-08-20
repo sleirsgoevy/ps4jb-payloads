@@ -278,6 +278,8 @@ void r0gdb_setup(int do_swapgs)
     gate[10] = addr[6];
     gate[11] = addr[7];
     copyin(idt+1*16, gate, 16);
+    if(do_swapgs == 2)
+        copyin(idt+6*16, gate, 16);
     gate[4] = 3;
     gate[5] = 0xee;
     copyin(idt+9*16, gate, 16);

@@ -12,6 +12,8 @@
 #include "kekcall.h"
 #include "fself.h"
 
+int have_error_code;
+
 extern char syscall_before[];
 extern char syscall_after[];
 extern struct sysent sysents[];
@@ -26,7 +28,11 @@ void handle(uint64_t* regs)
     {
         regs[RAX] |= 0xffffull << 48;
 #define IS_PPR(which) (regs[RAX] == (uint64_t)&sysents[SYS_##which])
+#ifdef FREEBSD
+#define IS_PS4(which) 0
+#else
 #define IS_PS4(which) (regs[RAX] == (uint64_t)&sysents2[SYS_##which])
+#endif
 #define IS(which) (IS_PPR(which) || IS_PS4(which))
         if(IS_PPR(getppid))
         {
@@ -41,12 +47,14 @@ void handle(uint64_t* regs)
                 regs[RIP] = (uint64_t)syscall_after;
             }
         }
+#ifndef FREEBSD
         else if(IS(execve)
              || IS(dynlib_load_prx)
              || IS(get_self_auth_info)
              || IS(get_sdk_compiled_version)
              || IS_PPR(get_ppr_sdk_compiled_version))
             handle_fself_syscall(regs);
+#endif
 #undef IS
 #undef IS_PS4
 #undef IS_PPR
@@ -58,13 +66,17 @@ void handle(uint64_t* regs)
         {
         case TRAP_UTILS: handle_utils_trap(regs, TRAP_IDX(lr)); break;
         case TRAP_KEKCALL: handle_kekcall_trap(regs, TRAP_IDX(lr)); break;
+#ifndef FREEBSD
         case TRAP_FSELF: handle_fself_trap(regs, TRAP_IDX(lr)); break;
+#endif
         }
     }
+#ifndef FREEBSD
     else if(try_handle_fself_trap(regs))
         return;
     else if(handle_fself_parasites(regs))
         return;
+#endif
     else
     {
         int decrypted = 0;
@@ -95,10 +107,24 @@ void handle(uint64_t* regs)
     }
 }
 
-void main(void)
+void main(uint64_t just_return)
 {
     uint64_t regs[NREGS];
     copy_from_kernel(regs, trap_frame, sizeof(regs));
+    uint64_t jr_frame[5];
+    copy_from_kernel(jr_frame, just_return, 40);
+    have_error_code = jr_frame[0];
+    regs[RDX] = jr_frame[2];
+    regs[RCX] = jr_frame[3];
+    regs[RAX] = jr_frame[4];
+    if(!(regs[CS] & 3))
+        regs[EFLAGS] |= 0x10000; //RF
     handle(regs);
+    if((regs[CS] & 3)) //we've interrupted userspace
+    {
+        //determine correct gsbase for userspace
+        uint64_t gsbase = kpeek64(kpeek64(kpeek64((uint64_t)pcpu)+td_pcb)+pcb_gsbase);
+        wrmsr(0xc0000102, gsbase); //the final iret will swapgs it
+    }
     copy_to_kernel(trap_frame, regs, sizeof(regs));
 }

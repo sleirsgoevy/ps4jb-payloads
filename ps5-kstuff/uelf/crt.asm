@@ -27,6 +27,7 @@ ret
 ; rdi = trap_frame
 ; rsi = cr3 of caller
 ; rdx = our cr3 (currently unused)
+; rcx = justreturn frame (has saved rax/rcx/rdx)
 _start:
 mov [rel trap_frame], rdi
 mov [rel cr3_phys], rsi
@@ -35,9 +36,11 @@ xchg rsp, [rel saved_rsp]
 test rsp, rsp
 jnz .unyield
 lea rsp, [rel stack+16384]
+mov rdi, rcx
 call main
 hlt
 .unyield:
+mov rax, rcx
 pop r15
 pop r14
 pop r13

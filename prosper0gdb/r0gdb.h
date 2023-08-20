@@ -1,5 +1,6 @@
 #pragma once
 #include <sys/types.h>
+#include "../gdb_stub/trap_state.h"
 
 /* krw utils */
 
@@ -17,6 +18,9 @@ void r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d);
 
 //set up for interactive gdb
 void r0gdb_setup(int do_swapgs);
+
+//run in kernel with the provided registers
+void run_in_kernel(struct regs*);
 
 //set up for trace capture
 void r0gdb_trace(size_t trace_size);

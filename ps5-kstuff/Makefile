@@ -1,13 +1,16 @@
 all: payload.bin
 
 clean:
-	rm -f payload.elf payload.bin kelf kelf.o structs.h uelf/uelf uelf/crt.o
+	rm -f payload.elf payload.bin freebsd-loader kelf kelf.o structs.h structs.inc uelf/uelf uelf/crt.o
 
 ../lib/lib.a:
 	cd ../lib; make
 
 ../prosper0gdb/prosper0gdb.o:
 	cd ../prosper0gdb; make
+
+structs.inc: structs-ps5.inc
+	cp structs-ps5.inc structs.inc
 
 payload.elf: ../lib/lib.a ../prosper0gdb/prosper0gdb.o main.c kelf uelf/uelf
 	#gcc -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -static ../lib/lib.a ../prosper0gdb/prosper0gdb.o -DDEBUG main.c ../prosper0gdb/dbg.c -Wl,-gc-sections -o payload.elf -fPIE -ffreestanding

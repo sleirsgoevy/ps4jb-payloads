@@ -1,99 +1,75 @@
+#define _BSD_SOURCE
 #include <sys/types.h>
-#include <sys/mman.h>
-#include "../prosper0gdb/r0gdb.h"
-#include "../gdb_stub/dbg.h"
-
-#include <signal.h>
-#include <stddef.h>
-#include <time.h>
+#include <sys/syscall.h>
+#include <stdarg.h>
 #include <unistd.h>
+#include <string.h>
+#include <sys/mman.h>
 
-static void infsleep(int sig)
+void kkfncall(void* td, uintptr_t** uap)
 {
-    struct timespec ts = {1000, 0};
-    for(;;)
-        nanosleep(&ts, 0);
+    uap[1][0] = ((uintptr_t(*)())uap[1][0])(uap[1][1], uap[1][2], uap[1][3], uap[1][4], uap[1][5], uap[1][6], uap[1][7]);
 }
 
-void kill_thread(void)
+uintptr_t kfncall(uintptr_t fn, ...)
 {
-    struct sigaction sa = {
-        .sa_handler = infsleep,
-    };
-    sigaction(SIGUSR1, &sa, 0);
-    sigset_t ss = {0};
-	ss.__bits[_SIG_WORD(SIGUSR1)] |= _SIG_BIT(SIGUSR1);
-    sigprocmask(SIG_BLOCK, &ss, NULL);
-    for(int i = 0; i < 1000; i++)
-        kill(getpid(), SIGUSR1);
+    uintptr_t args[7] = {fn};
+    va_list va;
+    va_start(va, fn);
+    for(int i = 0; i < 6; i++)
+        args[i+1] = va_arg(va, uintptr_t);
+    va_end(va);
+    syscall(11, kkfncall, args);
+    return args[0];
 }
 
-void ignore_signals(void)
+void kmemcpy(void* dst, const void* src, size_t sz)
 {
-    struct sigaction sa = {
-        .sa_handler = SIG_IGN,
-    };
-    for(int i = 1; i < 100; i++)
-        if(i != SIGTRAP
-        && i != SIGILL
-        && i != SIGBUS
-        && i != SIGINT
-        && i != SIGSYS
-        && i != SIGSEGV)
-            sigaction20(i, &sa, 0);
+    kfncall(0xffffffff80f9e760, (uintptr_t)dst, (uintptr_t)src, (uintptr_t)sz);
 }
 
-extern uint64_t kdata_base;
-
-void kmemcpy(void* dst, const void* src, size_t sz);
-
-static void kpoke64(void* dst, uint64_t src)
+void kpoke64(void* dst, uint64_t value)
 {
-    kmemcpy(dst, &src, 8);
+    kmemcpy(dst, &value, 8);
 }
 
-static void kmemzero(void* dst, size_t sz)
+void kmemzero(void* dst, size_t sz)
 {
-    char* umem = mmap(0, sz, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
-    mlock(umem, sz);
-    kmemcpy(dst, umem, sz);
-    munmap(umem, sz);
+    kfncall(0xffffffff810c4b40, (uintptr_t)dst, 0, sz);
 }
 
-static int strcmp(const char* a, const char* b)
+void copyout(void* dst, uintptr_t src, size_t sz)
 {
-    while(*a && *a == *b)
-    {
-        a++;
-        b++;
-    }
-    return *a - *b;
+    kfncall(0xffffffff80f9e800, src, (uintptr_t)dst, sz);
 }
 
-#define kmalloc my_kmalloc
-
-static uint64_t mem_blocks[8];
-
-static void* kmalloc(size_t sz)
+void copyin(uintptr_t dst, const void* src, size_t sz)
 {
-    for(int i = 0; i < 8; i += 2)
-    {
-        if(mem_blocks[i] + sz <= mem_blocks[i+1])
-        {
-            uint64_t ans = mem_blocks[i];
-            mem_blocks[i] += sz;
-            return (void*)ans;
-        }
-    }
-    asm volatile("ud2");
-    return 0;
+    kfncall(0xffffffff80f9e880, (uintptr_t)src, dst, sz);
 }
 
-#define NCPUS 16
-#define IDT (kdata_base+0x64cdc80)
-#define GDT(i) (kdata_base+0x64cee30+0x68*(i))
-#define TSS(i) (kdata_base+0x64d0830+0x68*(i))
-#define PCPU(i) (kdata_base+0x64d2280+0x900*(i))
+void* kmalloc(size_t sz)
+{
+    return (void*)kfncall(0xffffffff80aaf760, sz, 0xffffffff819b3e90, 2);
+}
+
+void krcr3(void* td, uint64_t** uap)
+{
+    asm volatile("mov %%cr3, %0":"=r"(uap[1][0]));
+}
+
+uint64_t r0gdb_read_cr3(void)
+{
+    uint64_t cr3;
+    syscall(11, krcr3, &cr3);
+    return cr3;
+}
+
+#define NCPUS 3
+#define IDT 0xffffffff81d7d540
+#define GDT(i) (0xffffffff81e2a7d0+0x68*(i))
+#define TSS(i) (0xffffffff81e23f90+0x68*(i))
+#define PCPU(i) (0xffffffff81e31080+0x400*(i))
 
 size_t virt2file(uint64_t* phdr, uint16_t phnum, uintptr_t addr)
 {
@@ -219,7 +195,7 @@ void* malloc(size_t sz)
 uint64_t get_dmap_base(void)
 {
     uint64_t ptrs[2];
-    copyout(ptrs, kdata_base + 0x3257a98, sizeof(ptrs));
+    copyout(ptrs, 0xffffffff81e71920, sizeof(ptrs));
     return ptrs[0] - ptrs[1];
 }
 
@@ -273,117 +249,66 @@ void build_uelf_cr3(uint64_t uelf_cr3, void* uelf_base[2])
         copyin(pml3_dmap+8*i, &(uint64_t[1]){(i<<30) | 135}, 8);
 }
 
-int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
+int main()
 {
-    r0gdb_init(ds, a, b, c, d);
-    dbg_enter();
-    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"allocating kernel memory... ", (uintptr_t)28);
-    for(int i = 0; i < 0x300; i += 2)
-        r0gdb_kmalloc(0x100);
-    for(int i = 0; i < 2; i += 2)
-    {
-        while(!mem_blocks[i])
-            mem_blocks[i] = r0gdb_kmalloc(1<<23);
-        mem_blocks[i+1] = (mem_blocks[i] ? mem_blocks[i] + (1<<23) : 0);
-    }
-    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
-    volatile int zero = 0; //hack to force runtime calculation of string pointers
+    mlock(kek, kek_end-kek);
+    mlock(uek, uek_end-uek);
     const char* symbols[] = {
-        "add_rsp_iret"+zero,
-        "copyin"+zero,
-        "copyout"+zero,
-        "decryptSelfBlock_epilogue"+zero,
-        "decryptSelfBlock_watchpoint"+zero,
-        "decryptSelfBlock_watchpoint_lr"+zero,
-        "doreti_iret"+zero,
-        "dr2gpr_end"+zero,
-        "dr2gpr_start"+zero,
-        "gpr2dr_1_end"+zero,
-        "gpr2dr_1_start"+zero,
-        "gpr2dr_2_end"+zero,
-        "gpr2dr_2_start"+zero,
-        ".ist_errc"+zero,
-        ".ist_noerrc"+zero,
-        "justreturn"+zero,
-        "justreturn_pop"+zero,
-        "kdata_base"+zero,
-        "loadSelfSegment_epilogue"+zero,
-        "loadSelfSegment_watchpoint"+zero,
-        "loadSelfSegment_watchpoint_lr"+zero,
-        "mini_syscore_header"+zero,
-        "mov_cr3_rax"+zero,
-        "mov_rdi_cr3"+zero,
-        "nop_ret"+zero,
-        ".pcpu"+zero,
-        "pop_all_except_rdi_iret"+zero,
-        "pop_all_iret"+zero,
-        "push_pop_all_iret"+zero,
-        "rdmsr_end"+zero,
-        "rdmsr_start"+zero,
-        "rep_movsb_pop_rbp_ret"+zero,
-        "sceSblServiceIsLoadable2"+zero,
-        "sceSblServiceMailbox"+zero,
-        "sceSblServiceMailbox_lr_decryptSelfBlock"+zero,
-        "sceSblServiceMailbox_lr_loadSelfSegment"+zero,
-        "sceSblServiceMailbox_lr_verifyHeader"+zero,
-        "soo_ioctl"+zero,
-        "syscall_after"+zero,
-        "syscall_before"+zero,
-        "sysents"+zero,
-        "sysents2"+zero,
-        "swapgs_add_rsp_iret"+zero,
-        ".uelf_cr3"+zero,
-        ".uelf_entry"+zero,
-        "wrmsr_ret"+zero,
+        "add_rsp_iret",
+        "copyin",
+        "copyout",
+        "doreti_iret",
+        "dr2gpr_start",
+        "gpr2dr_1_start",
+        "gpr2dr_2_start",
+        "justreturn",
+        "justreturn_pop",
+        ".ist_errc",
+        ".ist_noerrc",
+        "mov_cr3_rax",
+        "mov_rdi_cr3",
+        "nop_ret",
+        ".pcpu",
+        "pop_all_iret",
+        "push_pop_all_iret",
+        "rdmsr_start",
+        "rep_movsb_pop_rbp_ret",
+        "swapgs_add_rsp_iret",
+        "syscall_after",
+        "syscall_before",
+        "sysents",
+        ".uelf_cr3",
+        ".uelf_entry",
+        "wrmsr_ret",
         0,
     };
     uint64_t values[] = {
-        kdata_base - 0x9cf853, // add_rsp_iret
-        kdata_base - 0x9908e0, // copyin
-        kdata_base - 0x990990, // copyout
-        kdata_base - 0x8a52c3, // decryptSelfBlock_epilogue
-        kdata_base - 0x2cc88e, // decryptSelfBlock_watchpoint
-        kdata_base - 0x8a538a, // decryptSelfBlock_watchpoint_lr
-        kdata_base - 0x9cf84c, // doreti_iret
-        kdata_base - 0x9d6d7c, // dr2gpr_end
-        kdata_base - 0x9d6d93, // dr2gpr_start
-        kdata_base - 0x9d6c55, // gpr2dr_1_end
-        kdata_base - 0x9d6c7a, // gpr2dr_1_start
-        kdata_base - 0x9d6de9, // gpr2dr_2_end
-        kdata_base - 0x9d6b87, // gpr2dr_2_start
-        0x1237,                // ist_errc
-        0x1238,                // ist_noerrc
-        kdata_base - 0x9cf990, // justreturn
-        kdata_base - 0x9cf988, // justreturn_pop
-        kdata_base,            // kdata_base
-        kdata_base - 0x8a54cd, // loadSelfSegment_epilogue
-        kdata_base - 0x2cc918, // loadSelfSegment_watchpoint
-        kdata_base - 0x8a5727, // loadSelfSegment_watchpoint_lr
-        kdata_base + 0xdc16e8, // mini_syscore_header
-        kdata_base - 0x396f9e, // mov_cr3_rax
-        kdata_base - 0x39700e, // mov_rdi_cr3
-        kdata_base - 0x28a3a0, // nop_ret
-        0x1234,                // .pcpu
-        kdata_base - 0x9cf8a7, // pop_all_except_rdi_iret
-        kdata_base - 0x9cf8ab, // pop_all_iret
-        kdata_base - 0x96be70, // push_pop_all_iret
-        kdata_base - 0x9d6cf9, // rdmsr_end
-        kdata_base - 0x9d6d02, // rdmsr_start
-        kdata_base - 0x990a55, // rep_movsb_pop_rbp_ret
-        kdata_base - 0x8a5c40, // sceSblServiceIsLoadable2
-        kdata_base - 0x6824c0, // sceSblServiceMailbox
-        kdata_base - 0x8a5014, // sceSblServiceMailbox_lr_decryptSelfBlock
-        kdata_base - 0x8a5541, // sceSblServiceMailbox_lr_loadSelfSegment
-        kdata_base - 0x8a58bc, // sceSblServiceMailbox_lr_verifyHeader
-        kdata_base - 0x96eb98, // soo_ioctl
-        kdata_base - 0x8022ee, // syscall_after
-        kdata_base - 0x802311, // syscall_before
-        kdata_base + 0x1709c0, // sysents
-        kdata_base + 0x168410, // sysents2
-        kdata_base - 0x9cf856, // swapgs_add_rsp_iret, XXX
-        0x1235,                // .uelf_cr3
-        0x1236,                // .uelf_entry
-        kdata_base - 0x9d20cc, // wrmsr_ret
+        0xffffffff80f8568d, // add_rsp_iret
+        0xffffffff80f9e880, // copyin
+        0xffffffff80f9e800, // copyout
+        0xffffffff80f85695, // doreti_iret
+        0xffffffff80f837a8, // dr2gpr_start
+        0xffffffff80f8381e, // gpr2dr_1_start
+        0xffffffff802ffeba, // gpr2dr_2_start
+        0xffffffff80f85550, // justreturn
+        0xffffffff80f85558, // justreturn_pop
+        0x1237,    // ist_errc
+        0x1238,    // ist_noerrc
+        0xffffffff80f82d87, // mov_cr3_rax
+        0xffffffff80cc27ed, // mov_rdi_cr3
+        0xffffffff802ff132, // nop_ret
+        0x1234,             // .pcpu
+        0xffffffff80f85636, // pop_all_iret
+        0xffffffff80f84f80, // push_pop_all_iret
+        0xffffffff80f81f53, // rdmsr_start
+        0xffffffff80f9e779, // rep_movsb_pop_rbp_ret
+        0xffffffff80f8568b, // swapgs_add_rsp_iret, XXX
+        0xffffffff80fa168e, // syscall_after
+        0xffffffff80fa168b, // syscall_before
+        0xffffffff819a7840, // sysents
+        0x1235,             // .uelf_cr3
+        0x1236,             // .uelf_entry
+        0xffffffff80f84756, // wrmsr_ret
         0,
     };
     size_t pcpu_idx, uelf_cr3_idx, uelf_entry_idx, ist_errc_idx, ist_noerrc_idx;
@@ -401,24 +326,11 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     uint64_t kelf_entries[NCPUS];
     for(int cpu = 0; cpu < NCPUS; cpu++)
     {
-        char buf[] = "loading on cpu ..\n";
-        if(cpu >= 10)
-        {
-            buf[15] = '1';
-            buf[16] = (cpu - 10) + '0';
-            gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)buf, (uintptr_t)18);
-        }
-        else
-        {
-            buf[15] = cpu + '0';
-            buf[16] = '\n';
-            gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)buf, (uintptr_t)17);
-        }
         values[pcpu_idx] = PCPU(cpu);
         values[uelf_cr3_idx] = 0;
         values[uelf_entry_idx] = 0;
-        values[ist_errc_idx] = TSS(cpu) + 28 + 3*8;
-        values[ist_noerrc_idx] = TSS(cpu) + 28 + 7*8;
+        values[ist_errc_idx] = TSS(cpu)+28+3*8;
+        values[ist_noerrc_idx] = TSS(cpu)+28+7*8;
         void* uelf_entry = 0;
         void* uelf_base[2] = {0};
         char* uelf = load_kelf(uek, symbols, values, uelf_base, &uelf_entry, 0x400000);
@@ -434,7 +346,6 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kelf_bases[cpu] = (uint64_t)kelf;
         kelf_entries[cpu] = (uint64_t)entry;
     }
-    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done loading\npatching idt... ", (uintptr_t)29);
     uint64_t cr3 = r0gdb_read_cr3();
     for(int cpu = 0; cpu < NCPUS; cpu++)
     {
@@ -442,21 +353,18 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kmemcpy((char*)IDT+16*13, (char*)entry, 2);
         kmemcpy((char*)IDT+16*13+6, (char*)entry+2, 6);
         kmemcpy((char*)IDT+16*13+4, "\x03", 1);
+        kmemcpy((char*)IDT+16*0x7c, (char*)entry+16, 2);
+        kmemcpy((char*)IDT+16*0x7c+6, (char*)entry+18, 6);
+        kmemcpy((char*)IDT+16*0x7c+4, "\x07\xee", 2);
         kmemcpy((char*)IDT+16*1, (char*)entry+16, 2);
         kmemcpy((char*)IDT+16*1+6, (char*)entry+18, 6);
         kmemcpy((char*)IDT+16*1+4, "\x07", 1);
         kmemcpy((char*)TSS(cpu)+28+3*8, (char*)entry+8, 8);
         kmemcpy((char*)TSS(cpu)+28+7*8, (char*)entry+24, 8);
     }
-    uint64_t iret = kdata_base - 0x9cf84c;
+    //kmemzero((char*)IDT+16*1, 16);
+    uint64_t iret = 0xffffffff80f85695;
     kmemcpy((char*)(IDT+16*2), (char*)&iret, 2);
     kmemcpy((char*)(IDT+16*2+6), (char*)&iret+2, 6);
-    //kmemzero((char*)(IDT+16*1), 16);
-    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\npatching sysentvec... ", (uintptr_t)27);
-    copyin(kdata_base + 0xd11bb8 + 14, &(const uint16_t[1]){0xdeb7}, 2);
-    copyin(kdata_base + 0xd11d30 + 14, &(const uint16_t[1]){0xdeb7}, 2);
-    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
-    p_kekcall = (char*)dlsym((void*)0x2001, "getpid") + 7;
-    asm volatile("ud2");
     return 0;
 }

@@ -17,6 +17,10 @@ p/x $wrmsr = kdata_base - 0x9cf8bb
 p/x $rep_movsb_pop_rbp_ret = kdata_base - 0x990a55
 p/x $mov_rdi_cr3 = kdata_base - 0x39700e
 p/x $mov_cr3_rax = kdata_base - 0x396f9e
+p/x $int_0x7e = kdata_base - 0x63fa92
+p/x $justreturn = kdata_base - 0x9cf990
+p/x $justreturn_pop = kdata_base - 0x9cf988
+p/x $wrmsr_ret = kdata_base - 0x9d20cc
 
 p/x $malloc = kdata_base - 0xa9b00
 p/x $M_something = kdata_base + 0x1346080

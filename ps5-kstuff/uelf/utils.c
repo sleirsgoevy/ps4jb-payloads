@@ -71,14 +71,18 @@ int copy_to_kernel(uint64_t dst, const void* src, uint64_t sz)
     return 0;
 }
 
-void yield(void);
-void unyield(uint64_t rsp);
+uint64_t yield(void);
 
 void run_gadget(uint64_t* regs)
 {
     copy_to_kernel(trap_frame, regs, NREGS*8);
-    yield();
+    uint64_t just_return = yield();
+    uint64_t jr_frame[5];
     copy_from_kernel(regs, trap_frame, NREGS*8);
+    copy_from_kernel(jr_frame, just_return, 40);
+    regs[RDX] = jr_frame[2];
+    regs[RCX] = jr_frame[3];
+    regs[RAX] = jr_frame[4];
 }
 
 extern char dr2gpr_start[];
@@ -86,6 +90,7 @@ extern char gpr2dr_1_start[];
 extern char gpr2dr_2_start[];
 extern char rdmsr_start[];
 extern char rdmsr_end[];
+extern char wrmsr_ret[];
 extern char doreti_iret[];
 extern char syscall_after[];
 
@@ -130,6 +135,18 @@ int rdmsr(uint32_t which, uint64_t* ans)
         return 0;
     *ans = regs[RDX] << 32 | (uint32_t)regs[RAX];
     return 1;
+}
+
+int wrmsr(uint32_t which, uint64_t value)
+{
+    uint64_t regs[NREGS] = {
+        [RIP] = (uint64_t)wrmsr_ret, 0x20, 0x102, 0, 0,
+        [RCX] = which,
+        [RAX] = (uint32_t)value,
+        [RDX] = value >> 32,
+    };
+    run_gadget(regs);
+    return regs[RIP] != (uint64_t)wrmsr_ret;
 }
 
 void start_syscall_with_dbgregs(uint64_t* regs, const uint64_t* dbgregs)

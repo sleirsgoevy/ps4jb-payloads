@@ -1,0 +1,25 @@
+all: freebsd-loader
+
+clean:
+	rm -f payload.elf payload.bin freebsd-loader kelf kelf.o structs.h structs.inc uelf/uelf uelf/crt.o
+
+structs.inc: structs-freebsd.inc
+	cp structs-freebsd.inc structs.inc
+
+kelf.o: kelf.asm structs.inc
+	yasm -f elf64 -g dwarf2 kelf.asm -o kelf.o
+
+kelf: kelf.o
+	gcc -nostdlib -shared kelf.o -x c /dev/null -o kelf
+
+structs.h: structs.inc
+	sed 's/^%/#/' structs.inc > structs.h
+
+uelf/crt.o: uelf/crt.asm
+	yasm uelf/crt.asm -f elf64 -o uelf/crt.o
+
+uelf/uelf: uelf/*.c uelf/*.h structs.h uelf/crt.o
+	gcc -Wl,-zmax-page-size=4096 -Wl,-Bsymbolic -O0 -g -DFREEBSD -std=gnu11 -nostdlib -fno-stack-protector -fPIE -fPIC -shared -ffreestanding -fno-builtin uelf/crt.o uelf/*.c -o uelf/uelf
+
+freebsd-loader: uelf/uelf kelf freebsd-loader.c
+	gcc -O0 -g -std=gnu11 freebsd-loader.c -mno-red-zone -o freebsd-loader
