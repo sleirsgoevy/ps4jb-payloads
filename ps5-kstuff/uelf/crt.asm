@@ -5,6 +5,7 @@ global yield
 global memcpy
 global cr3_phys
 global trap_frame
+global wrmsr_args
 global _start
 extern main
 
@@ -31,12 +32,14 @@ ret
 _start:
 mov [rel trap_frame], rdi
 mov [rel cr3_phys], rsi
+mov [rel wrmsr_args], r8
 xor rsp, rsp
 xchg rsp, [rel saved_rsp]
 test rsp, rsp
 jnz .unyield
 lea rsp, [rel stack+16384]
 mov rdi, rcx
+mov rsi, r8
 call main
 hlt
 .unyield:
@@ -54,6 +57,8 @@ align 16
 trap_frame:
 resq 1
 cr3_phys:
+resq 1
+wrmsr_args:
 resq 1
 stack:
 resb 16384

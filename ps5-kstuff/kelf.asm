@@ -77,15 +77,16 @@ dq 2
 dq errc_justreturn+32
 dq 0
 
+dq 1
 errc_justreturn:
 times 4 dq 0
 dq justreturn_pop
 dq 0x20
 dq 2
-dq .wrmsr_gsbase+4
+dq errc_wrmsr_gsbase+4
 dq 0
 dd 0
-.wrmsr_gsbase:
+errc_wrmsr_gsbase:
 dq pcpu
 dd 0
 dq 0xc0000101
@@ -93,9 +94,9 @@ dq pcpu
 dq wrmsr_ret
 dq 0x20
 dq 2
-dq .wrmsr_return
+dq errc_wrmsr_return
 dq 0
-.wrmsr_return:
+errc_wrmsr_return:
 dq doreti_iret
 dq push_pop_all_iret
 dq 0x20
@@ -113,8 +114,8 @@ dq errc_entry
 dq 0
 
 errc_entry:
-memcpy regs_for_exit, errc_regs_stash, iret_rip
-memcpy regs_for_exit+iret_rip, errc_iret_frame, 40
+memcpy regs_for_exit, errc_regs_stash, iret_rip-8
+memcpy regs_for_exit+iret_rip-8, errc_iret_frame-8, 48
 memcpy justreturn_bak, errc_justreturn-8, 40
 dq doreti_iret
 dq nop_ret
@@ -132,16 +133,15 @@ dq 0x20
 dq 2
 dq noerrc_justreturn+32
 dq 0
-
 noerrc_justreturn:
 times 4 dq 0
 dq justreturn_pop
 dq 0x20
 dq 2
-dq .wrmsr_gsbase+4
+dq noerrc_wrmsr_gsbase+4
 dq 0
 dd 0
-.wrmsr_gsbase:
+noerrc_wrmsr_gsbase:
 dq pcpu
 dd 0
 dq 0xc0000101
@@ -149,9 +149,9 @@ dq pcpu
 dq wrmsr_ret
 dq 0x20
 dq 2
-dq .wrmsr_return
+dq noerrc_wrmsr_return
 dq 0
-.wrmsr_return:
+noerrc_wrmsr_return:
 dq doreti_iret
 dq push_pop_all_iret
 dq 0x20
@@ -247,7 +247,9 @@ times iret_rdx-iret_rsi-8 db 0
 dq uelf_cr3
 times iret_rcx-iret_rdx-8 db 0
 dq justreturn_bak
-times iret_rip-iret_rcx-8 db 0
+times iret_r8-iret_rcx-8 db 0
+dq return_wrmsr_gsbase+4
+times iret_rip-iret_r8-8 db 0
 dq doreti_iret
 dq 0x20
 dq 2
@@ -298,6 +300,25 @@ dq 0
 
 return_to_caller:
 pokeq ist_noerrc, noerrc_iret_frame+40
+dq doreti_iret
+dq justreturn_pop
+dq 0x20
+dq 2
+dq return_wrmsr_gsbase+4
+dq 0
+dd 0
+return_wrmsr_gsbase:
+dq pcpu
+dd 0
+dq 0xc0000101
+dq pcpu
+dq wrmsr_ret
+dq 0x20
+dq 2
+dq .after_wrmsr
+dq 0
+.after_wrmsr:
+memcpy return_wrmsr_gsbase+4, noerrc_wrmsr_gsbase+4, 24
 dq pop_all_iret
 regs_for_exit:
 times iret_rip+40 db 0

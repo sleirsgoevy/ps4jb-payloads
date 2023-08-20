@@ -277,6 +277,15 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
     r0gdb_init(ds, a, b, c, d);
     dbg_enter();
+    uint64_t percpu_ist4[NCPUS];
+    for(int cpu = 0; cpu < NCPUS; cpu++)
+        copyout(&percpu_ist4[cpu], TSS(cpu)+28+4*8, 8);
+    uint64_t int1_handler;
+    copyout(&int1_handler, IDT+16*1, 2);
+    copyout((char*)&int1_handler + 2, IDT+16*1+6, 6);
+    uint64_t int13_handler;
+    copyout(&int13_handler, IDT+16*13, 2);
+    copyout((char*)&int13_handler + 2, IDT+16*13+6, 6);
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"allocating kernel memory... ", (uintptr_t)28);
     for(int i = 0; i < 0x300; i += 2)
         r0gdb_kmalloc(0x100);
@@ -302,8 +311,11 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         "gpr2dr_1_start"+zero,
         "gpr2dr_2_end"+zero,
         "gpr2dr_2_start"+zero,
+        "int1_handler"+zero,
+        "int13_handler"+zero,
         ".ist_errc"+zero,
         ".ist_noerrc"+zero,
+        ".ist4"+zero,
         "justreturn"+zero,
         "justreturn_pop"+zero,
         "kdata_base"+zero,
@@ -332,6 +344,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         "sysents"+zero,
         "sysents2"+zero,
         "swapgs_add_rsp_iret"+zero,
+        ".tss"+zero,
         ".uelf_cr3"+zero,
         ".uelf_entry"+zero,
         "wrmsr_ret"+zero,
@@ -351,8 +364,11 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kdata_base - 0x9d6c7a, // gpr2dr_1_start
         kdata_base - 0x9d6de9, // gpr2dr_2_end
         kdata_base - 0x9d6b87, // gpr2dr_2_start
-        0x1237,                // ist_errc
-        0x1238,                // ist_noerrc
+        int1_handler,          // int1_handler
+        int13_handler,         // int13_handler
+        0x1237,                // .ist_errc
+        0x1238,                // .ist_noerrc
+        0x1239,                // .ist4
         kdata_base - 0x9cf990, // justreturn
         kdata_base - 0x9cf988, // justreturn_pop
         kdata_base,            // kdata_base
@@ -381,12 +397,13 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kdata_base + 0x1709c0, // sysents
         kdata_base + 0x168410, // sysents2
         kdata_base - 0x9cf856, // swapgs_add_rsp_iret, XXX
+        0x123a,                // .tss
         0x1235,                // .uelf_cr3
         0x1236,                // .uelf_entry
         kdata_base - 0x9d20cc, // wrmsr_ret
         0,
     };
-    size_t pcpu_idx, uelf_cr3_idx, uelf_entry_idx, ist_errc_idx, ist_noerrc_idx;
+    size_t pcpu_idx, uelf_cr3_idx, uelf_entry_idx, ist_errc_idx, ist_noerrc_idx, ist4_idx, tss_idx;
     for(size_t i = 0; values[i]; i++)
         switch(values[i])
         {
@@ -395,6 +412,8 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         case 0x1236: uelf_entry_idx = i; break;
         case 0x1237: ist_errc_idx = i; break;
         case 0x1238: ist_noerrc_idx = i; break;
+        case 0x1239: ist4_idx = i; break;
+        case 0x123a: tss_idx = i; break;
         }
     uint64_t uelf_bases[NCPUS];
     uint64_t kelf_bases[NCPUS];
@@ -417,8 +436,10 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         values[pcpu_idx] = PCPU(cpu);
         values[uelf_cr3_idx] = 0;
         values[uelf_entry_idx] = 0;
-        values[ist_errc_idx] = TSS(cpu) + 28 + 3*8;
-        values[ist_noerrc_idx] = TSS(cpu) + 28 + 7*8;
+        values[ist_errc_idx] = TSS(cpu)+28+3*8;
+        values[ist_noerrc_idx] = TSS(cpu)+28+7*8;
+        values[ist4_idx] = percpu_ist4[cpu];
+        values[tss_idx] = TSS(cpu);
         void* uelf_entry = 0;
         void* uelf_base[2] = {0};
         char* uelf = load_kelf(uek, symbols, values, uelf_base, &uelf_entry, 0x400000);
@@ -457,6 +478,10 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     copyin(kdata_base + 0xd11d30 + 14, &(const uint16_t[1]){0xdeb7}, 2);
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
     p_kekcall = (char*)dlsym((void*)0x2001, "getpid") + 7;
+    //restore the gdb_stub's SIGTRAP handler
+    struct sigaction sa;
+    sigaction(SIGBUS, 0, &sa);
+    sigaction(SIGTRAP, &sa, 0);
     asm volatile("ud2");
     return 0;
 }

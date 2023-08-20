@@ -25,4 +25,5 @@ enum
     RSP,
     SS,
     NREGS,
+    ERRC = RIP - 1,
 };

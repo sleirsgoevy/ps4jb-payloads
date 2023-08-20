@@ -44,6 +44,8 @@ int handle_kekcall(uint64_t* regs, uint64_t* args, uint32_t nr)
     {
         return rdmsr(args[RDI], &args[RAX]) ? 0 : EFAULT;
     }
+    else if(nr == 0x42)
+        regs[CS] |= 1;
     else if(nr == 0xffffffff)
     {
         args[RAX] = 0;

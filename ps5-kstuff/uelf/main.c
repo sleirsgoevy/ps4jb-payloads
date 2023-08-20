@@ -19,10 +19,59 @@ extern char syscall_after[];
 extern struct sysent sysents[];
 extern struct sysent sysents2[];
 extern char doreti_iret[];
+extern char ist4[];
+extern char tss[];
+extern char int1_handler[];
+extern char int13_handler[];
+extern uint64_t wrmsr_args;
 
 void handle(uint64_t* regs)
 {
-    if(handle_syscall_parasites(regs))
+    if(!(regs[CS] & 3))
+        regs[EFLAGS] |= 0x10000; //RF
+    if((regs[CS] & 3) || (regs[EFLAGS] & 0x40000)) //from userspace, or from copyin/copyout
+    {
+from_userspace:
+        if((regs[CS] & 3)) //from userspace
+        {
+            //determine correct gsbase for userspace
+            uint64_t gsbase = kpeek64(kpeek64(kpeek64((uint64_t)pcpu)+td_pcb)+pcb_gsbase);
+            //arm wrmsr in the exit path
+            uint64_t args[3] = {gsbase >> 32, 0xc0000101, (uint32_t)gsbase};
+            copy_to_kernel(wrmsr_args, args, sizeof(args));
+        }
+        //inject a fake #DB or #GP exception
+        uint64_t stack;
+#ifndef FREEBSD
+        if(!have_error_code)
+            stack = (uint64_t)ist4;
+        else
+#endif
+        {
+            if((regs[CS] & 3))
+                copy_from_kernel(&stack, (uint64_t)tss+4, 8);
+            else
+                stack = regs[RSP];
+        }
+        stack &= -16;
+        if(have_error_code)
+        {
+            stack -= 48;
+            copy_to_kernel(stack, regs+ERRC, 48);
+            regs[RIP] = (uint64_t)int13_handler;
+        }
+        else
+        {
+            stack -= 40;
+            copy_to_kernel(stack, regs+RIP, 40);
+            regs[RIP] = (uint64_t)int1_handler;
+        }
+        regs[CS] = 0x20;
+        regs[EFLAGS] = 2;
+        regs[RSP] = stack;
+        regs[SS] = 0;
+    }
+    else if(handle_syscall_parasites(regs))
         return;
     else if(regs[RIP] == (uint64_t)syscall_before)
     {
@@ -61,7 +110,16 @@ void handle(uint64_t* regs)
     }
     else if(regs[RIP] == (uint64_t)doreti_iret)
     {
-        uint64_t lr = kpeek64(regs[RSP]);
+        uint64_t frame[5];
+        copy_from_kernel(frame, regs[RSP], sizeof(frame));
+        if((frame[1] & 3)) //#GP in iret to userspace
+        {
+            //pretend that the #GP was inside userspace
+            //stock kernel crashes on this, lol
+            memcpy(regs+RIP, frame, sizeof(frame));
+            goto from_userspace;
+        }
+        uint64_t lr = frame[0];
         switch(TRAP_KIND(lr))
         {
         case TRAP_UTILS: handle_utils_trap(regs, TRAP_IDX(lr)); break;
@@ -117,14 +175,6 @@ void main(uint64_t just_return)
     regs[RDX] = jr_frame[2];
     regs[RCX] = jr_frame[3];
     regs[RAX] = jr_frame[4];
-    if(!(regs[CS] & 3))
-        regs[EFLAGS] |= 0x10000; //RF
     handle(regs);
-    if((regs[CS] & 3)) //we've interrupted userspace
-    {
-        //determine correct gsbase for userspace
-        uint64_t gsbase = kpeek64(kpeek64(kpeek64((uint64_t)pcpu)+td_pcb)+pcb_gsbase);
-        wrmsr(0xc0000102, gsbase); //the final iret will swapgs it
-    }
     copy_to_kernel(trap_frame, regs, sizeof(regs));
 }
