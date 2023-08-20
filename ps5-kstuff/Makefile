@@ -33,4 +33,4 @@ uelf/crt.o: uelf/crt.asm
 	yasm uelf/crt.asm -f elf64 -o uelf/crt.o
 
 uelf/uelf: uelf/*.c uelf/*.h structs.h uelf/crt.o
-	gcc -Wl,-Bsymbolic -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -mgeneral-regs-only -fno-stack-protector -fPIE -fPIC -shared -ffreestanding -fno-builtin uelf/crt.o uelf/*.c -o uelf/uelf
+	gcc -Wl,-Bsymbolic -Wl,-gc-sections -ffunction-sections -fdata-sections -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -mgeneral-regs-only -fno-stack-protector -fPIE -fPIC -shared -ffreestanding -fno-builtin uelf/crt.o uelf/*.c -o uelf/uelf

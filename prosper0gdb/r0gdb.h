@@ -70,6 +70,9 @@ int sigaction20(int sig, const struct sigaction* neww, struct sigaction* oldd);
 //get_self_auth_info that works
 int get_self_auth_info_20(const char* path, void* buf);
 
+//mdbg_call that works
+int mdbg_call_20(void* a, void* b, void* c);
+
 //kernel function call
 uint64_t r0gdb_kfncall(uint64_t kfn, ...);
 

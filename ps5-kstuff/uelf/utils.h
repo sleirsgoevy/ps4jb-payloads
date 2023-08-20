@@ -17,6 +17,7 @@ void read_dbgregs(uint64_t* dr);
 void write_dbgregs(const uint64_t* dr);
 void start_syscall_with_dbgregs(uint64_t* regs, const uint64_t* dbgregs);
 void handle_utils_trap(uint64_t* regs, uint32_t trapno);
+void handle_syscall(uint64_t* regs, int allow_kekcall);
 int rdmsr(uint32_t which, uint64_t* ans);
 int wrmsr(uint32_t which, uint64_t value);
 

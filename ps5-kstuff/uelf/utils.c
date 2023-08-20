@@ -151,8 +151,7 @@ int wrmsr(uint32_t which, uint64_t value)
 
 void start_syscall_with_dbgregs(uint64_t* regs, const uint64_t* dbgregs)
 {
-    regs[RSI] = regs[RSP] + syscall_rsp_to_rsi;
-    uint64_t stack_frame[13] = {
+    uint64_t stack_frame[12] = {
         (uint64_t)doreti_iret,
         MKTRAP(TRAP_UTILS, 1), 0, 0, 0, 0,
     };
@@ -160,7 +159,6 @@ void start_syscall_with_dbgregs(uint64_t* regs, const uint64_t* dbgregs)
     push_stack(regs, stack_frame, sizeof(stack_frame));
     set_pcb_dbregs();
     write_dbgregs(dbgregs);
-    regs[RIP] = kpeek64(regs[RAX] + 8);
 }
 
 void handle_utils_trap(uint64_t* regs, uint32_t trapno)
@@ -170,6 +168,6 @@ void handle_utils_trap(uint64_t* regs, uint32_t trapno)
         uint64_t stack_frame[12];
         pop_stack(regs, stack_frame, sizeof(stack_frame));
         write_dbgregs(stack_frame+5);
-        regs[RIP] = (uint64_t)syscall_after;
+        regs[RIP] = stack_frame[11];
     }
 }

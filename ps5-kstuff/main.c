@@ -322,9 +322,12 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         "loadSelfSegment_epilogue"+zero,
         "loadSelfSegment_watchpoint"+zero,
         "loadSelfSegment_watchpoint_lr"+zero,
+        "mdbg_call_fix"+zero,
         "mini_syscore_header"+zero,
         "mov_cr3_rax"+zero,
         "mov_rdi_cr3"+zero,
+        "mprotect_fix_start"+zero,
+        "mprotect_fix_end"+zero,
         "nop_ret"+zero,
         ".pcpu"+zero,
         "pop_all_except_rdi_iret"+zero,
@@ -375,9 +378,12 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kdata_base - 0x8a54cd, // loadSelfSegment_epilogue
         kdata_base - 0x2cc918, // loadSelfSegment_watchpoint
         kdata_base - 0x8a5727, // loadSelfSegment_watchpoint_lr
+        kdata_base - 0x631ea9, // mdbg_call_fix
         kdata_base + 0xdc16e8, // mini_syscore_header
         kdata_base - 0x396f9e, // mov_cr3_rax
         kdata_base - 0x39700e, // mov_rdi_cr3
+        kdata_base - 0x90ac61, // mprotect_fix_start
+        kdata_base - 0x90ac5b, // mprotect_fix_end
         kdata_base - 0x28a3a0, // nop_ret
         0x1234,                // .pcpu
         kdata_base - 0x9cf8a7, // pop_all_except_rdi_iret
@@ -455,6 +461,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kelf_bases[cpu] = (uint64_t)kelf;
         kelf_entries[cpu] = (uint64_t)entry;
     }
+    r0gdb_wrmsr(0xc0000084, r0gdb_rdmsr(0xc0000084) | 0x100);
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done loading\npatching idt... ", (uintptr_t)29);
     uint64_t cr3 = r0gdb_read_cr3();
     for(int cpu = 0; cpu < NCPUS; cpu++)
@@ -482,6 +489,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     struct sigaction sa;
     sigaction(SIGBUS, 0, &sa);
     sigaction(SIGTRAP, &sa, 0);
+    copyin(IDT+16*179+5, "\x89", 1);
     asm volatile("ud2");
     return 0;
 }

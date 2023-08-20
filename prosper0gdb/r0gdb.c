@@ -696,6 +696,7 @@ void* mmap20(void* addr, size_t sz, int prot, int flags, int fd, off_t offset)
 
 static uint64_t sys_write;
 static uint64_t sys_sigaction;
+static uint64_t sys_mdbg_call;
 
 static void fix_sigaction_17_9(uint64_t* regs)
 {
@@ -761,6 +762,30 @@ int get_self_auth_info_20(const char* path, void* buf)
     for(size_t i = 0; i < 0x88; i++)
         dst[i] = src[i];
     return 0;
+}
+
+static void fix_mdbg_call(uint64_t* regs)
+{
+    SKIP_SCHEDULER
+    if(regs[0] == sys_write)
+        regs[0] = sys_mdbg_call;
+    else if(regs[0] == kdata_base - 0x631ea9)
+        regs[5] = 1;
+}
+
+int mdbg_call_20(void* a, void* b, void* c)
+{
+    r0gdb_instrument(0);
+    int(*p_write)(void*, void*, void*) = dlsym((void*)0x2001, "_write");
+    trace_prog = fix_mdbg_call;
+    if(!sys_write)
+        kmemcpy(&sys_write, (void*)(kdata_base + 0x1709c0 + 48*SYS_write + 8), 8);
+    if(!sys_mdbg_call)
+        kmemcpy(&sys_mdbg_call, (void*)(kdata_base + 0x1709c0 + 48*573 + 8), 8);
+    set_trace();
+    int ans = p_write(a, b, c);
+    trace_prog = 0;
+    return ans;
 }
 
 static uint64_t fncall_fn = 0;

@@ -11,6 +11,7 @@
 #include "traps.h"
 #include "kekcall.h"
 #include "fself.h"
+#include "syscall_fixes.h"
 
 int have_error_code;
 
@@ -24,6 +25,44 @@ extern char tss[];
 extern char int1_handler[];
 extern char int13_handler[];
 extern uint64_t wrmsr_args;
+
+void handle_syscall(uint64_t* regs, int allow_kekcall)
+{
+#define IS_PPR(which) (regs[RAX] == (uint64_t)&sysents[SYS_##which])
+#ifdef FREEBSD
+#define IS_PS4(which) 0
+#else
+#define IS_PS4(which) (regs[RAX] == (uint64_t)&sysents2[SYS_##which])
+#endif
+#define IS(which) (IS_PPR(which) || IS_PS4(which))
+    if(IS_PPR(getppid) && allow_kekcall)
+    {
+        uint64_t args[NREGS] = {0};
+        copy_from_kernel(args, regs[RSP]+syscall_rsp_to_regs_stash+8, sizeof(args));
+        int err = handle_kekcall(regs, args, args[RAX]>>32);
+        if(err != ENOSYS)
+        {
+            if(!err)
+                kpoke64(regs[RDI]+td_retval, args[RAX]);
+            regs[RAX] = err;
+            pop_stack(regs, regs+RIP, 8);
+        }
+    }
+#ifndef FREEBSD
+    else if(IS(execve)
+         || IS(dynlib_load_prx)
+         || IS(get_self_auth_info)
+         || IS(get_sdk_compiled_version)
+         || IS_PPR(get_ppr_sdk_compiled_version))
+        handle_fself_syscall(regs);
+    else if(IS(mprotect)
+         || IS_PPR(mdbg_call))
+        handle_syscall_fix(regs);
+#endif
+#undef IS
+#undef IS_PS4
+#undef IS_PPR
+}
 
 void handle(uint64_t* regs)
 {
@@ -76,37 +115,10 @@ from_userspace:
     else if(regs[RIP] == (uint64_t)syscall_before)
     {
         regs[RAX] |= 0xffffull << 48;
-#define IS_PPR(which) (regs[RAX] == (uint64_t)&sysents[SYS_##which])
-#ifdef FREEBSD
-#define IS_PS4(which) 0
-#else
-#define IS_PS4(which) (regs[RAX] == (uint64_t)&sysents2[SYS_##which])
-#endif
-#define IS(which) (IS_PPR(which) || IS_PS4(which))
-        if(IS_PPR(getppid))
-        {
-            uint64_t args[NREGS] = {0};
-            copy_from_kernel(args, regs[RSP]+syscall_rsp_to_regs_stash, sizeof(args));
-            int err = handle_kekcall(regs, args, args[RAX]>>32);
-            if(err != ENOSYS)
-            {
-                if(!err)
-                    kpoke64(regs[RDI]+td_retval, args[RAX]);
-                regs[RAX] = err;
-                regs[RIP] = (uint64_t)syscall_after;
-            }
-        }
-#ifndef FREEBSD
-        else if(IS(execve)
-             || IS(dynlib_load_prx)
-             || IS(get_self_auth_info)
-             || IS(get_sdk_compiled_version)
-             || IS_PPR(get_ppr_sdk_compiled_version))
-            handle_fself_syscall(regs);
-#endif
-#undef IS
-#undef IS_PS4
-#undef IS_PPR
+        regs[RSI] = regs[RSP] + syscall_rsp_to_rsi;
+        push_stack(regs, (const uint64_t[1]){(uint64_t)syscall_after}, 8);
+        regs[RIP] = kpeek64(regs[RAX]+8);
+        handle_syscall(regs, 1);
     }
     else if(regs[RIP] == (uint64_t)doreti_iret)
     {
@@ -133,6 +145,8 @@ from_userspace:
     else if(try_handle_fself_trap(regs))
         return;
     else if(handle_fself_parasites(regs))
+        return;
+    else if(try_handle_syscall_fix_trap(regs))
         return;
 #endif
     else
