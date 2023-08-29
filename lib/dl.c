@@ -2,12 +2,7 @@
 #include <sys/types.h>
 #include <stddef.h>
 
-int sceKernelLoadStartModule(const char* path, long, long, long, long, long);
-
-void* dlopen(const char* path, int mode)
-{
-    return (void*)(long long)sceKernelLoadStartModule(path, 0, 0, 0, 0, 0);
-}
+int (*p_sceKernelLoadStartModule)(const char* path, long, long, long, long, long);
 
 int dynlib_dlsym(int, const char*, void**);
 
@@ -16,4 +11,11 @@ void* dlsym(void* handle, const char* name)
     void* addr = 0;
     dynlib_dlsym((int)(long long)handle, name, &addr);
     return addr;
+}
+
+void* dlopen(const char* path, int mode)
+{
+    if(!p_sceKernelLoadStartModule)
+        p_sceKernelLoadStartModule = dlsym((void*)0x2001, "sceKernelLoadStartModule");
+    return (void*)(long long)p_sceKernelLoadStartModule(path, 0, 0, 0, 0, 0);
 }

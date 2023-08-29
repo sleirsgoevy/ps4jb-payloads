@@ -2,9 +2,12 @@
 #define _BSD_SOURCE
 //extern int errno;
 //#define errno not_errno
-//#define pthread_t not_pthread_t
-//#include <sys/thr.h>
+#ifdef PS5KEK
+#define pthread_t not_pthread_t
+#include <sys/thr.h>
+#else
 #include <pthread.h>
+#endif
 #include <machine/sysarch.h>
 #else
 #define _GNU_SOURCE
@@ -27,7 +30,9 @@
 
 #ifdef __PS4__
 //#undef errno
-//#undef pthread_t
+#ifdef PS5KEK
+#undef pthread_t
+#endif
 #define PAGE_SIZE 16384ull
 #else
 #define PAGE_SIZE 4096ull
@@ -846,7 +851,7 @@ int in_signal_handler = 0;
 
 #if defined(INTERRUPTER_THREAD) || defined(STDIO_REDIRECT)
 
-#if 0 //def __PS4__
+#ifdef PS5KEK
 // mock code, to make main code cleaner
 // not "real" pthreads
 
@@ -857,16 +862,22 @@ void pthread_create(long* p_tid, void* _2, void* f, void* arg)
     long x, y;
     static char* stack;
     static char* stack2;
+    static char* tls;
     if(!stack)
         stack = mmap(NULL, 65536, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
     if(!stack2)
         stack2 = mmap(NULL, 65536, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    if(!tls)
+    {
+        tls = mmap(NULL, 65536, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+        *(uint64_t*)(tls+16) = (uint64_t)tls;
+    }
     struct thr_param param = {
         .start_func = (void(*)(void*))f,
         .arg = arg,
         .stack_base = arg ? stack2 : stack,
         .stack_size = 65536,
-        .tls_base = NULL, // never used
+        .tls_base = tls, //needed so that __error() works
         .tls_size = 0,
         .child_tid = &x,
         .parent_tid = p_tid,
@@ -915,8 +926,8 @@ void* interrupter_thread(void* o)
     while(select(gdb_socket+1, &a, &b, &b, NULL) <= 0);
     if(!in_signal_handler)
         kill(getpid(), SIGINT);
-#ifdef __PS4__
-    //thr_exit(0);
+#if defined(__PS4__) && defined(PS5KEK)
+    thr_exit(0);
 #endif
 }
 
@@ -935,6 +946,7 @@ static mcontext_t* p_mcontext;
 
 static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
 {
+    int tmp_errno = errno;
     while(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE));
     ucontext_t* uc = (ucontext_t*)o_uc;
 #ifdef __PS4__
@@ -1047,6 +1059,7 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
 #ifdef INTERRUPTER_THREAD
     start_interrupter_thread();
 #endif
+    errno = tmp_errno;
 }
 
 long gdb_remote_syscall(const char* name, int nargs, int* ern, ...)
@@ -1093,12 +1106,12 @@ void ps4_xchg_sony_cred(uint64_t*);
 
 static int replace_with_socket(int fd)
 {
-#ifdef PS4LIBS
+#if defined(PS4LIBS) && !defined(PS5KEK)
     uint64_t cred = 0x3800000000000007;
     ps4_xchg_sony_cred(&cred);
 #endif
     close(fd);
-#ifdef PS4LIBS
+#if defined(PS4LIBS) && !defined(PS5KEK)
     ps4_xchg_sony_cred(&cred);
 #endif
     int socks[2];
@@ -1149,8 +1162,8 @@ static void* stdio_redirect_thread(void* o)
             }
         }
     }
-#ifdef __PS4__
-    //thr_exit(0);
+#if defined(__PS4__) && defined(PS5KEK)
+    thr_exit(0);
 #endif
     return NULL;
 }
@@ -1172,6 +1185,11 @@ static void* stdio_redirect_thread(void* o)
 #endif
 
 static unsigned long long start_rip;
+
+#ifdef PS5KEK
+#define sigaction(...) p_sigaction(__VA_ARGS__)
+static int(*p_sigaction)(int, const struct sigaction*, struct sigaction*);
+#endif
 
 static void tmp_sigsegv(int sig, siginfo_t* idc, void* o_uc)
 {
@@ -1221,6 +1239,12 @@ static void unblock_signals(void)
 
 void real_dbg_enter(uint64_t* rsp)
 {
+#ifdef PS5KEK
+    {
+        void* dlsym(void*, const char*);
+        p_sigaction = dlsym((void*)0x2001, "_sigaction");
+    }
+#endif
 #ifdef __PS4__
 #ifdef BLOB
     mprotect_rwx();
@@ -1240,13 +1264,13 @@ void real_dbg_enter(uint64_t* rsp)
             .sin_addr = {.s_addr = 0},
             .sin_port = (port >> 8) | (port << 8),
         };
-#if defined(__PS4__) && defined(PS4LIBS)
+#if defined(__PS4__) && defined(PS4LIBS) && !defined(PS5KEK)
         void ps4_xchg_budget(int*);
         int budget = 2;
         ps4_xchg_budget(&budget);
 #endif
         brv = bind(sock, (struct sockaddr*)&sa, sizeof(sa));
-#if defined(__PS4__) && defined(PS4LIBS)
+#if defined(__PS4__) && defined(PS4LIBS) && !defined(PS5KEK)
         ps4_xchg_budget(&budget);
 #endif
     }

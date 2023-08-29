@@ -1,7 +1,7 @@
-all: payload.bin gdbstub.bin gdbstub-int.bin gdbstub-obj.o gdbstub-obj-redir.o
+all: payload.bin payload-kek.bin gdbstub.bin gdbstub-int.bin gdbstub-obj.o gdbstub-obj-redir.o
 
 clean:
-	rm -f payload.elf payload.bin gdbstub.elf gdbstub.bin gdbstub-int.elf gdbstub-int.bin gdbstub-obj.o gdbstub-obj-redir.o r0hooks.o gdbstub-obj-ring0.o
+	rm -f payload.elf payload.bin payload-kek.elf payload-kek.bin gdbstub.elf gdbstub.bin gdbstub-int.elf gdbstub-int.bin gdbstub-obj.o gdbstub-obj-redir.o r0hooks.o gdbstub-obj-ring0.o
 
 ../lib/lib.a:
 	cd ../lib; make
@@ -12,6 +12,13 @@ payload.elf: ../lib/lib.a dbg.c main.c
 payload.bin: payload.elf
 	objcopy payload.elf --only-section .text --only-section .data --only-section .bss --only-section .rodata --set-section-flags .bss=alloc,load,contents -O binary payload.bin
 	file payload.bin | fgrep -q 'payload.bin: DOS executable (COM)'
+
+payload-kek.elf: ../lib/lib.a dbg.c main.c ps4libs.c
+	gcc -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -fPIE -ffreestanding -static ../lib/lib-ps5.a -D__PS4__ -DINTERRUPTER_THREAD -DNO_BREAKPOINT_EMULATION -DPS5KEK -DPS4LIBS dbg.c main.c ps4libs.c -o payload-kek.elf
+
+payload-kek.bin: payload-kek.elf
+	objcopy payload-kek.elf --only-section .text --only-section .data --only-section .bss --only-section .rodata --set-section-flags .bss=alloc,load,contents -O binary payload-kek.bin
+	file payload-kek.bin | fgrep -q 'payload-kek.bin: DOS executable (COM)'
 
 gdbstub.elf: ../lib/lib.a dbg.c _end.c
 	gcc -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -fPIE -ffreestanding -static ../lib/lib.a -D__PS4__ -Ddbg_enter=main -DBLOB dbg.c _end.c -Wl,-gc-sections -o gdbstub.elf

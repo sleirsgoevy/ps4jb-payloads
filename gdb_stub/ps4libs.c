@@ -3,8 +3,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#undef errno
-extern int errno;
+//#undef errno
+//extern int errno;
 
 typedef unsigned char pkt_opaque[1];
 
@@ -120,7 +120,7 @@ static int handle_lib(pkt_opaque o, srv_opaque p, const char* name, unsigned lon
     unsigned long long dyn = base + ptrs[1];
     serve_genfn_emit(o, p, "<library name=\"", 15);
     serve_genfn_emit(o, p, name, l);
-    char buf[] = "\" l_addr=\"0xXXXXXXXXXXXX\" lm=\"0\" l_ld=\"0xXXXXXXXXXXXX\"/>";
+    char buf[] = "\" l_addr=\"0xXXXXXXXXXXXX\" lm=\"0\" l_ld=\"0xXXXXXXXXXXXX\" lmid=\"1\"/>";
     for(int i = 0; i < 12; i++)
     {
         buf[i + 12] = "0123456789abcdef"[(base >> (44 - 4 * i)) & 15];
