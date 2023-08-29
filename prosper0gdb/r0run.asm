@@ -124,6 +124,7 @@ mov rdi, [rel trace_start]
 mov rsi, rsp
 rep movsb
 mov [rel trace_start], rdi
+or byte [rsp+18], 1
 cmp qword [rel trace_prog], 0
 jz .no_program
 mov rdi, rsp

@@ -53,3 +53,6 @@ p/x $authmgr_loadSelfSegment_call_mailbox = kdata_base - 0x8a5546
 
 p/x $authmgr_decryptSelfBlock = kdata_base - 0x8a5410
 p/x $authmgr_decryptSelfBlock_call_mailbox = kdata_base - 0x8a5019
+
+p/x $verifySuperBlock_call_mailbox = kdata_base - 0x94a7f5
+p/x $unloadPfsmgrSecureModule_call_mailbox = kdata_base - 0x229b7b

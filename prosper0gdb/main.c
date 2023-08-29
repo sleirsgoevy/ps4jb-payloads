@@ -121,6 +121,23 @@ int remount_rw(const char* dev, const char* mnt)
     return do_nmount(iov, 14, MNT_UPDATE);
 }
 
+void log_deltas(uint64_t pointer)
+{
+    for(;;)
+    {
+        struct regs regs = {0};
+        regs.rip = pointer;
+        regs.eflags = 0x102;
+        run_in_kernel(&regs);
+        uint32_t delta = regs.rip - (pointer + 5);
+        char buf[9] = {[8] = '\n'};
+        for(int i = 0; i < 8; i++)
+            buf[i] = "0123456789abcdef"[(delta >> (28-4*i))&15];
+        gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)buf, (uintptr_t)9);
+        pointer += 8;
+    }
+}
+
 int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
     r0gdb_init(ds, a, b, c, d);

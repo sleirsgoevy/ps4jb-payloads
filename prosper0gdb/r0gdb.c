@@ -367,20 +367,25 @@ uint64_t r0gdb_read_dbreg(int which)
     return regs[which];
 }
 
-void r0gdb_write_dbregs(uint64_t* out)
+void r0gdb_write_dbregs(uint64_t* inp)
 {
     struct regs regs = {0};
     regs.rip = kdata_base - 0x9d6c7a;
     regs.rsp = kstack;
     regs.eflags = 0x102;
-    regs.r15 = out[0];
-    regs.r14 = out[1];
-    regs.r13 = out[2];
-    regs.rbx = out[3];
-    regs.r11 = out[4];
-    regs.rcx = out[5];
-    regs.rax = r0gdb_read_dbreg(7);
+    regs.r15 = inp[0];
+    regs.r14 = inp[1];
+    regs.r13 = inp[2];
+    regs.rbx = inp[3];
+    regs.r11 = inp[4];
+    regs.rcx = inp[5];
+    regs.rax = inp[5];
     for(int i = 0; i < 9; i++)
+        run_in_kernel(&regs);
+    regs.r11 = inp[4];
+    regs.r15 = inp[5];
+    regs.rip = kdata_base - 0x9d6b87;
+    for(int i = 0; i < 3; i++)
         run_in_kernel(&regs);
 }
 
@@ -843,6 +848,11 @@ static int instrs_left;
 static void instr_count(uint64_t* regs)
 {
     SKIP_SCHEDULER
+    if(!(regs[2] & 256))
+    {
+        regs[2] |= 256;
+        instrs_left = 100;
+    }
     if(regs[0] == instr_start)
     {
         regs[0] = instr_jump;
@@ -1056,9 +1066,19 @@ static void do_dump_at_rip(uint64_t* regs)
                 reg = regs[*prg++];
             while(*prg != (uint64_t)-1)
             {
-                uint64_t val;
-                kmemcpy(&val, (void*)(reg + (*prg++)), 8);
-                reg = val;
+                if(*prg == (uint64_t)-2)
+                {
+                    prg++;
+                    if(*prg == (uint64_t)-2)
+                        break;
+                    reg += *prg++;
+                }
+                else
+                {
+                    uint64_t val;
+                    kmemcpy(&val, (void*)(reg + (*prg++)), 8);
+                    reg = val;
+                }
             }
             prg++;
             *(uint64_t*)(*prg++) = reg;
