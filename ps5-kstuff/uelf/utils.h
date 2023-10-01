@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <stddef.h>
 #include "structs.h"
+#include "log.h"
 
 extern uint64_t cr3_phys;
 extern uint64_t trap_frame;
@@ -23,8 +24,9 @@ int wrmsr(uint32_t which, uint64_t value);
 
 static inline uint64_t kpeek64(uintptr_t kptr)
 {
-    uint64_t ans;
-    copy_from_kernel(&ans, kptr, sizeof(ans));
+    uint64_t ans = 0;
+    if(copy_from_kernel(&ans, kptr, sizeof(ans)))
+        log_word((uint64_t)__builtin_return_address(0));
     return ans;
 }
 

@@ -25,6 +25,7 @@
 
 %define p_pid 0xbc
 
+%define pcb_fsbase 0x40
 %define pcb_gsbase 0x48
 %define pcb_flags 0x100
 

@@ -5,6 +5,7 @@ enum
     TRAP_UTILS = 0xdead0000,
     TRAP_KEKCALL,
     TRAP_FSELF,
+    TRAP_FPKG,
 };
 
 #define MKTRAP(kind, idx) (((uint64_t)(kind) << 32) | ((uint64_t)(idx)))

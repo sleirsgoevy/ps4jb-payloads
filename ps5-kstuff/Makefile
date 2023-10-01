@@ -32,5 +32,11 @@ structs.h: structs.inc
 uelf/crt.o: uelf/crt.asm
 	yasm uelf/crt.asm -f elf64 -o uelf/crt.o
 
-uelf/uelf: uelf/*.c uelf/*.h structs.h uelf/crt.o
-	gcc -Wl,-Bsymbolic -Wl,-gc-sections -ffunction-sections -fdata-sections -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -mgeneral-regs-only -fno-stack-protector -fPIE -fPIC -shared -ffreestanding -fno-builtin uelf/crt.o uelf/*.c -o uelf/uelf
+uelf/uelf: uelf/*.c uelf/*.h structs.h uelf/crt.o BearSSL/build/libbearssl.a libtomcrypt/libtomcrypt.a
+	gcc -Wl,-Bsymbolic -Wl,-gc-sections -ffunction-sections -fdata-sections -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -mgeneral-regs-only -fno-stack-protector -fPIE -fPIC -shared -fvisibility=hidden -ffreestanding uelf/crt.o uelf/*.c -L BearSSL/build -lbearssl -L libtomcrypt -ltomcrypt -o uelf/uelf
+
+BearSSL/build/libbearssl.a: build_bearssl.sh overrides.h
+	bash build_bearssl.sh
+
+libtomcrypt/libtomcrypt.a: build_libtomcrypt.sh overrides.h
+	bash build_libtomcrypt.sh

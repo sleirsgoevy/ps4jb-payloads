@@ -11,6 +11,7 @@
 #include "traps.h"
 #include "kekcall.h"
 #include "fself.h"
+#include "fpkg.h"
 #include "syscall_fixes.h"
 
 int have_error_code;
@@ -55,6 +56,8 @@ void handle_syscall(uint64_t* regs, int allow_kekcall)
          || IS(get_sdk_compiled_version)
          || IS_PPR(get_ppr_sdk_compiled_version))
         handle_fself_syscall(regs);
+    else if(IS(nmount))
+        handle_fpkg_syscall(regs);
     else if(IS(mprotect)
          || IS_PPR(mdbg_call))
         handle_syscall_fix(regs);
@@ -138,6 +141,7 @@ from_userspace:
         case TRAP_KEKCALL: handle_kekcall_trap(regs, TRAP_IDX(lr)); break;
 #ifndef FREEBSD
         case TRAP_FSELF: handle_fself_trap(regs, TRAP_IDX(lr)); break;
+        case TRAP_FPKG: handle_fpkg_trap(regs, TRAP_IDX(lr)); break;
 #endif
         }
     }
@@ -145,6 +149,8 @@ from_userspace:
     else if(try_handle_fself_trap(regs))
         return;
     else if(handle_fself_parasites(regs))
+        return;
+    else if(try_handle_fpkg_trap(regs))
         return;
     else if(try_handle_syscall_fix_trap(regs))
         return;

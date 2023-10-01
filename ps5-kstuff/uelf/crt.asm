@@ -3,6 +3,8 @@ use64
 
 global yield
 global memcpy
+global memset
+global memmove
 global cr3_phys
 global trap_frame
 global wrmsr_args
@@ -23,6 +25,32 @@ memcpy:
 mov rax, rdi
 mov rcx, rdx
 rep movsb
+ret
+
+memset:
+movzx eax, sil
+mov rsi, rdi
+mov rcx, rdx
+rep stosb
+mov rax, rsi
+ret
+
+memmove:
+mov rax, rdi
+sub rax, rsi
+cmp rax, rdx
+jae memcpy
+test rax, rax
+je .mov_rax_rdi_ret
+lea rdi, [rdi+rdx-1]
+lea rsi, [rsi+rdx-1]
+mov rcx, rdx
+std
+rep movsb
+cld
+inc rdi
+.mov_rax_rdi_ret:
+mov rax, rdi
 ret
 
 ; rdi = trap_frame

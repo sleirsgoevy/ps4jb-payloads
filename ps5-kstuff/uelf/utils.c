@@ -19,6 +19,7 @@ int virt2phys(uint64_t addr, uint64_t* phys, uint64_t* phys_limit)
         if(!(next_pml & 1))
         {
             log_word(0xdeaddeaddeaddead);
+            log_word((uint64_t)__builtin_return_address(0));
             return 0;
         }
         if((next_pml & 128) || i == 12)
@@ -40,7 +41,10 @@ int copy_from_kernel(void* dst, uint64_t src, uint64_t sz)
     while(sz)
     {
         if(!virt2phys(src, &phys, &phys_end))
+        {
+            log_word((uint64_t)__builtin_return_address(0));
             return EFAULT;
+        }
         size_t chk = phys_end - phys;
         if(sz < chk)
             chk = sz;
@@ -59,7 +63,10 @@ int copy_to_kernel(uint64_t dst, const void* src, uint64_t sz)
     while(sz)
     {
         if(!virt2phys(dst, &phys, &phys_end))
+        {
+            log_word((uint64_t)__builtin_return_address(0));
             return EFAULT;
+        }
         size_t chk = phys_end - phys;
         if(sz < chk)
             chk = sz;
