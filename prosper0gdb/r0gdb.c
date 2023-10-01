@@ -575,6 +575,25 @@ static void untrace_fn(uint64_t* regs)
         return;\
     }
 
+static void* trace_prog_after_trace_on_break;
+
+static void trace_on_break(uint64_t* regs)
+{
+    SKIP_SCHEDULER
+    static uint64_t lr;
+    if(!(regs[2] & 256))
+    {
+        regs[2] |= 256;
+        kmemcpy(&lr, (void*)regs[3], 8);
+    }
+    else if(regs[0] == lr)
+    {
+        regs[2] &= -257;
+        if(trace_prog_after_trace_on_break)
+            trace_prog = trace_prog_after_trace_on_break;
+    }
+}
+
 static uint64_t* jprog = 0;
 
 static void do_jprog(uint64_t* regs)
@@ -1223,6 +1242,77 @@ static void trace_mailbox(uint64_t* regs)
     }
     else
         do_dump_at_rip(regs);
+}
+
+static void* trace_prog_after_mailbox = 0;
+
+static int ekh = 0x41414140;
+static int skh = 0x42424241;
+
+static void trace_mailbox_for_fpkg(uint64_t* regs)
+{
+    SKIP_SCHEDULER
+    if(regs[0] == kdata_base - 0x6824c0) //sceSblServiceMailbox
+    {
+        uint64_t lr;
+        kmemcpy(&lr, (void*)regs[3], 8);
+        mailbox_lr[mailbox_n++] = lr;
+        if(mailbox_n <= n_faked_decrypts)
+        {
+            ekh++;
+            skh++;
+            uint32_t stuff[4] = {0, 0, ekh, skh};
+            kmemcpy((void*)regs[11], stuff, 16);
+            mailbox_rdx = regs[11];
+            regs[0] = lr;
+            regs[5] = mailbox_fakeresp[mailbox_n-1];
+            regs[3] += 8;
+        }
+        if(mailbox_n == n_faked_decrypts && trace_prog_after_mailbox)
+            trace_prog = trace_prog_after_mailbox;
+    }
+    else if(regs[0] == kdata_base - 0x94aaa0) //sceSblPfsSetKeys
+    {
+        ekh++;
+        skh++;
+        kmemcpy((void*)regs[12], &ekh, 4);
+        kmemcpy((void*)regs[11], &skh, 4);
+        kmemcpy(regs, (void*)regs[3], 8);
+        regs[5] = 0;
+        regs[3] += 8;
+        if(trace_prog_after_mailbox)
+            trace_prog = trace_prog_after_mailbox;
+    }
+}
+
+static void trace_cryptasync(uint64_t* regs)
+{
+    SKIP_SCHEDULER
+    if(regs[0] == kdata_base - 0x8ed940) //sceSblServiceCryptAsync
+    {
+        uint64_t req = regs[12];
+        uint64_t msg;
+        kmemcpy(&msg, (void*)req, 8);
+        if(mailbox_n < 128)
+        {
+            kmemcpy(mailbox_request+128*mailbox_n, (void*)msg, 128);
+            if(mailbox_fakeresp[mailbox_n])
+            {
+                regs[3] -= 16;
+                kmemcpy((void*)regs[3], (const uint64_t[1]){0x1234}, 8);
+                kmemcpy(regs, (void*)(req+16), 8);
+                kmemcpy(regs+12, (void*)(req+24), 8);
+                regs[11] = (uint32_t)-2;
+            }
+        }
+        mailbox_n++;
+    }
+    else if(regs[0] == 0x1234)
+    {
+        kmemcpy(regs, (void*)(regs[3]+8), 8);
+        regs[3] += 16;
+        regs[5] = 0;
+    }
 }
 
 static uint64_t other_thread;

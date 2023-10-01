@@ -54,5 +54,19 @@ p/x $authmgr_loadSelfSegment_call_mailbox = kdata_base - 0x8a5546
 p/x $authmgr_decryptSelfBlock = kdata_base - 0x8a5410
 p/x $authmgr_decryptSelfBlock_call_mailbox = kdata_base - 0x8a5019
 
+p/x $sceSblPfsSetKeys = kdata_base - 0x94aaa0
 p/x $verifySuperBlock_call_mailbox = kdata_base - 0x94a7f5
+p/x $pfsunknown1_call_mailbox = kdata_base - 0x94a74f
+p/x $pfsunknown2_call_mailbox = kdata_base - 0x94a71b
 p/x $unloadPfsmgrSecureModule_call_mailbox = kdata_base - 0x229b7b
+p/x $registerMountKey = kdata_base - 0x8173c0
+p/x $registerMountKey_caller = kdata_base - 0x94b150
+p/x $registerMountKey_call_site = kdata_base - 0x94b0e3
+p/x $sceSblServiceCryptAsync = kdata_base - 0x8ed940
+p/x $sceSblPfsClearKey = kdata_base - 0x229c80
+
+p/x $crypt_request_start = kdata_base - 0x479e20
+p/x $crypt_message_resolve = kdata_base - 0x479d60
+p/x $crypt_get_algo_singleton = kdata_base - 0x410830
+p/x $crypt_singleton_array = kdata_base + 0x2e31830
+p/x $sceSblServiceCryptAsync_deref_singleton = kdata_base - 0x8ed902
