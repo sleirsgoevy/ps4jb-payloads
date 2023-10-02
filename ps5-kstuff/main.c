@@ -360,6 +360,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         ".tss"+zero,
         ".uelf_cr3"+zero,
         ".uelf_entry"+zero,
+        "verifySuperBlock_call_mailbox"+zero,
         "wrmsr_ret"+zero,
         0,
     };
@@ -419,6 +420,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         0x123a,                // .tss
         0x1235,                // .uelf_cr3
         0x1236,                // .uelf_entry
+        kdata_base - 0x94a7f5, // verifySuperBlock_call_mailbox
         kdata_base - 0x9d20cc, // wrmsr_ret
         0,
     };

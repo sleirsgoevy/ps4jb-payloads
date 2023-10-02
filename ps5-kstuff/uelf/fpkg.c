@@ -6,12 +6,12 @@
 #include "pfs_crypto.h"
 #include "fakekeys.h"
 
+extern char verifySuperBlock_call_mailbox[];
 extern char sceSblServiceMailbox[];
 extern char sceSblServiceCryptAsync_deref_singleton[];
 extern char crypt_message_resolve[];
 extern char doreti_iret[];
 
-extern char kdata_base[];
 
 #define IDX_TO_HANDLE(x) (0x13374100 | ((uint8_t)((x)+1)))
 #define HANDLE_TO_IDX(x) ((((x) & 0xffffff00) == 0x13374100 ? ((int)(uint8_t)(x)) : (int)0) - 1)
@@ -108,7 +108,7 @@ static int handle_crypto_request(uint64_t* regs)
 
 int try_handle_fpkg_trap(uint64_t* regs)
 {
-    if(regs[RIP] == (uint64_t)kdata_base - 0x94a7f5)
+    if(regs[RIP] == (uint64_t)verifySuperBlock_call_mailbox)
     {
         uint64_t req[8];
         copy_from_kernel(req, regs[RDX], 64);
@@ -180,7 +180,7 @@ void handle_fpkg_trap(uint64_t* regs, uint32_t trapno)
     }
 }
 
-static const uint64_t dbgregs_for_nmount[6] = {0x1337, (uint64_t)kdata_base - 0x94a7f5, 0, 0, 0, 0x404};
+static const uint64_t dbgregs_for_nmount[6] = {0x1337, (uint64_t)verifySuperBlock_call_mailbox, 0, 0, 0, 0x404};
 
 void handle_fpkg_syscall(uint64_t* regs)
 {
