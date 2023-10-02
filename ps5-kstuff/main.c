@@ -501,7 +501,9 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     copyin(kdata_base + 0xd11bb8 + 14, &(const uint16_t[1]){0xdeb7}, 2); //native sysentvec
     copyin(kdata_base + 0xd11d30 + 14, &(const uint16_t[1]){0xdeb7}, 2); //ps4 sysentvec
     copyin(kdata_base + 0x2e31830 + 11*8 + 2*8 + 6, &(const uint16_t[1]){0xdeb7}, 2); //crypt xts
-    copyin(kdata_base + 0x2e31830 + 11*8 + 9*8 + 6, &(const uint16_t[1]){0xdeb7}, 2); //crypt xts
+    copyin(kdata_base + 0x2e31830 + 11*8 + 9*8 + 6, &(const uint16_t[1]){0xdeb7}, 2); //crypt hmac
+    /*for(int i = 0; i < 22; i++)
+        copyin(kdata_base + 0x2e31830 + i*8 + 6, &(const uint16_t[1]){0xdeb7}, 2);*/
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
     p_kekcall = (char*)dlsym((void*)0x2001, "getpid") + 7;
     //restore the gdb_stub's SIGTRAP handler
