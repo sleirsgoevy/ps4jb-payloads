@@ -46,7 +46,7 @@ void handle_syscall(uint64_t* regs, int allow_kekcall)
             if(!err)
                 kpoke64(regs[RDI]+td_retval, args[RAX]);
             regs[RAX] = err;
-            pop_stack(regs, regs+RIP, 8);
+            pop_stack(regs, &regs[RIP], 8);
         }
     }
 #ifndef FREEBSD
@@ -99,13 +99,13 @@ from_userspace:
         if(have_error_code)
         {
             stack -= 48;
-            copy_to_kernel(stack, regs+ERRC, 48);
+            copy_to_kernel(stack, &regs[ERRC], 48);
             regs[RIP] = (uint64_t)int13_handler;
         }
         else
         {
             stack -= 40;
-            copy_to_kernel(stack, regs+RIP, 40);
+            copy_to_kernel(stack, &regs[RIP], 40);
             regs[RIP] = (uint64_t)int1_handler;
         }
         regs[CS] = 0x20;
@@ -131,7 +131,7 @@ from_userspace:
         {
             //pretend that the #GP was inside userspace
             //stock kernel crashes on this, lol
-            memcpy(regs+RIP, frame, sizeof(frame));
+            memcpy(&regs[RIP], frame, sizeof(frame));
             goto from_userspace;
         }
         uint64_t lr = frame[0];

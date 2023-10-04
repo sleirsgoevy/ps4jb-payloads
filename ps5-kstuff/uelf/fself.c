@@ -10,6 +10,9 @@
 static uint64_t s_auth_info_for_dynlib[17] = {0x4900000000000002, 0x0000000000000000, 0x800000000000ff00, 0x0000000000000000, 0x0000000000000000, 0x7000700080000000, 0x8000000000000000, 0x0000000000000000, 0xf0000000ffff4000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000};
 static uint64_t s_auth_info_for_exec[17] = {0x4400001084c2052d, 0x2000038000000000, 0x000000000000ff00, 0x0000000000000000, 0x0000000000000000, 0x4000400040000000, 0x4000000000000000, 0x0080000000000002, 0xf0000000ffff4000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000};
 
+static uint64_t s_auth_info_for_dynlib_ps4[17] = {0x3100000000000002, 0x0000000000000000, 0x000000000000ff00, 0x0000000000000000, 0x0000000000000000, 0x3000300040000000, 0x4000000000000000, 0x0080000000000000, 0xf0000000ffff4000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000};
+static uint64_t s_auth_info_for_exec_ps4[17] = {0x3100000000000001, 0x2000038000000000, 0x000000000000ff00, 0x0000000000000000, 0x0000000000000000, 0x4000400040000000, 0x4000000000000000, 0x0080000000000002, 0xf0000000ffff4000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000};
+
 static int copy_from_kernel_buffer(void* dst, uint64_t src, uint64_t src_end, uint64_t offset, size_t sz)
 {
     if(src + offset < src || src + offset > src_end)
@@ -19,7 +22,7 @@ static int copy_from_kernel_buffer(void* dst, uint64_t src, uint64_t src_end, ui
     return copy_from_kernel(dst, src + offset, sz);
 }
 
-static int is_header_fself(uint64_t header, uint32_t size, uint16_t* e_type, uint64_t* authinfo, int* have_authinfo)
+static int is_header_fself(uint64_t header, uint32_t size, uint16_t* e_type, int* is_ps4, uint64_t* authinfo, int* have_authinfo)
 {
     uint64_t header_end = header + size;
     uint16_t n_entries;
@@ -31,6 +34,8 @@ static int is_header_fself(uint64_t header, uint32_t size, uint16_t* e_type, uin
         return 0;
     if(e_type)
         *e_type = elf[2];
+    if(is_ps4)
+        *is_ps4 = (uint8_t)elf[1] < 2;
     uint64_t e_phoff = elf[4];
     uint16_t e_phnum = elf[7];
     uint64_t ex_offset = elf_offset + e_phoff + 56 * e_phnum;
@@ -60,13 +65,18 @@ extern char sceSblServiceIsLoadable2[];
 extern char sceSblServiceMailbox_lr_verifyHeader[];
 extern char sceSblServiceMailbox_lr_loadSelfSegment[];
 extern char sceSblServiceMailbox_lr_decryptSelfBlock[];
+extern char sceSblServiceMailbox_lr_decryptMultipleSelfBlocks[];
 extern char loadSelfSegment_watchpoint[];
 extern char loadSelfSegment_watchpoint_lr[];
 extern char loadSelfSegment_epilogue[];
 extern char decryptSelfBlock_watchpoint[];
 extern char decryptSelfBlock_watchpoint_lr[];
 extern char decryptSelfBlock_epilogue[];
+extern char decryptMultipleSelfBlocks_watchpoint_lr[];
+extern char decryptMultipleSelfBlocks_epilogue[];
 extern char mini_syscore_header[];
+
+extern char kdata_base[];
 
 static void set_dbgregs_for_watchpoint(uint64_t* regs, const uint64_t* dbgregs, size_t frame_size)
 {
@@ -100,6 +110,11 @@ static uint64_t dbgregs_for_decryptSelfBlock[6] = {
     0, 0x405,
 };
 
+static uint64_t dbgregs_for_decryptMultipleSelfBlocks[6] = {
+    (uint64_t)sceSblServiceMailbox, (uint64_t)decryptMultipleSelfBlocks_epilogue, 0, 0,
+    0, 0x405,
+};
+
 void handle_fself_syscall(uint64_t* regs)
 {
     start_syscall_with_dbgregs(regs, dbgregs_for_fself);
@@ -127,7 +142,7 @@ int try_handle_fself_trap(uint64_t* regs)
             uint64_t self_header = kpeek64(regs[R14] + 56);
             uint32_t size;
             copy_from_kernel(&size, regs[RDX]+16, 4);
-            if(is_header_fself(self_header, size, 0, 0, 0))
+            if(is_header_fself(self_header, size, 0, 0, 0, 0))
             {
                 char fself_header_backup[(48 + mini_syscore_header_size + 15) & -16];
                 uint64_t trap_frame[6] = {
@@ -147,7 +162,7 @@ int try_handle_fself_trap(uint64_t* regs)
         {
             uint64_t ctx[8];
             copy_from_kernel(ctx, regs[RBX], sizeof(ctx));
-            if(is_header_fself(ctx[7], (uint32_t)ctx[1], 0, 0, 0))
+            if(is_header_fself(ctx[7], (uint32_t)ctx[1], 0, 0, 0, 0))
             {
                 pop_stack(regs, &regs[RIP], 8);
                 regs[RAX] = 0;
@@ -157,11 +172,28 @@ int try_handle_fself_trap(uint64_t* regs)
         {
             uint64_t ctx[8];
             copy_from_kernel(ctx, kpeek64(regs[RBP] - sceSblServiceMailbox_decryptSelfBlock_rsp_to_rbp + sceSblServiceMailbox_decryptSelfBlock_rsp_to_self_context), sizeof(ctx));
-            if(is_header_fself(ctx[7], (uint32_t)ctx[1], 0, 0, 0))
+            if(is_header_fself(ctx[7], (uint32_t)ctx[1], 0, 0, 0, 0))
             {
                 uint64_t request[8];
                 copy_from_kernel(request, regs[RDX], sizeof(request));
                 memcpy(DMEM+request[1], DMEM+request[2], (uint32_t)request[6]);
+                pop_stack(regs, &regs[RIP], 8);
+                regs[RAX] = 0;
+            }
+        }
+        else if(lr == (uint64_t)sceSblServiceMailbox_lr_decryptMultipleSelfBlocks)
+        {
+            uint64_t ctx[8];
+            copy_from_kernel(ctx, regs[R13], sizeof(ctx));
+            if(is_header_fself(ctx[7], (uint32_t)ctx[1], 0, 0, 0, 0))
+            {
+                uint64_t request[8];
+                copy_from_kernel(request, regs[RDX], sizeof(request));
+                uint64_t* src = (uint64_t*)(DMEM + request[1]);
+                uint64_t* dst = (uint64_t*)(DMEM + request[2]);
+                uint32_t count = request[5];
+                for(uint32_t i = 0; i < count; i++)
+                    memcpy(DMEM+dst[i], DMEM+src[i], 16384);
                 pop_stack(regs, &regs[RIP], 8);
                 regs[RAX] = 0;
             }
@@ -174,16 +206,26 @@ int try_handle_fself_trap(uint64_t* regs)
         uint16_t e_type;
         int have_authinfo;
         uint64_t authinfo[17];
-        if(is_header_fself(ctx[7], (uint32_t)ctx[1], &e_type, authinfo, &have_authinfo))
+        int is_ps4;
+        if(is_header_fself(ctx[7], (uint32_t)ctx[1], &e_type, &is_ps4, authinfo, &have_authinfo))
         {
             uint64_t* p_authinfo;
             if(have_authinfo)
                 p_authinfo = authinfo;
-            else if(e_type == 0xfe18)
-                p_authinfo = s_auth_info_for_dynlib;
+            else if(is_ps4)
+            {
+                if(e_type == 0xfe18)
+                    p_authinfo = s_auth_info_for_dynlib_ps4;
+                else
+                    p_authinfo = s_auth_info_for_exec_ps4;
+            }
             else
-                p_authinfo = s_auth_info_for_exec;
-            copy_to_kernel(regs[R8], p_authinfo, 0x88);
+            {
+                if(e_type == 0xfe18)
+                    p_authinfo = s_auth_info_for_dynlib;
+                else
+                    p_authinfo = s_auth_info_for_exec;
+            }
             pop_stack(regs, &regs[RIP], 8);
             regs[RAX] = 0;
             copy_to_kernel(regs[RDI] + 62, &(const uint16_t[1]){0xdeb7}, 2);
@@ -204,9 +246,12 @@ int try_handle_fself_trap(uint64_t* regs)
         copy_from_kernel(frame, regs[RSP], sizeof(frame));
         if(frame[3] == (uint64_t)decryptSelfBlock_watchpoint_lr)
             set_dbgregs_for_watchpoint(regs, dbgregs_for_decryptSelfBlock, sizeof(frame));
+        else if(frame[3] == (uint64_t)decryptMultipleSelfBlocks_watchpoint_lr)
+            set_dbgregs_for_watchpoint(regs, dbgregs_for_decryptMultipleSelfBlocks, sizeof(frame));
     }
     else if(regs[RIP] == (uint64_t)loadSelfSegment_epilogue
-         || regs[RIP] == (uint64_t)decryptSelfBlock_epilogue)
+         || regs[RIP] == (uint64_t)decryptSelfBlock_epilogue
+         || regs[RIP] == (uint64_t)decryptMultipleSelfBlocks_epilogue)
          unset_dbgregs_for_watchpoint(regs);
     else
         return 0;

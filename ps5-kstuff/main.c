@@ -181,10 +181,16 @@ void* load_kelf(void* ehdr, const char** symbols, uint64_t* values, void** base,
             }
             if((uint32_t)oia[1] == 6 && oia[2])
                 asm volatile("ud2");
+            if(oia[0] + 8 > kernel_size)
+                asm volatile("ud2");
             kpoke64(kptr+oia[0], oia[2]+value);
         }
         else if((uint32_t)oia[1] == 8)
+        {
+            if(oia[0] + 8 > kernel_size)
+                asm volatile("ud2");
             kpoke64(kptr+oia[0], (uint64_t)(mapped_kptr+oia[2]));
+        }
         else
             asm volatile("ud2");
     }
@@ -309,6 +315,8 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         "copyin"+zero,
         "copyout"+zero,
         "crypt_message_resolve"+zero,
+        "decryptMultipleSelfBlocks_epilogue"+zero,
+        "decryptMultipleSelfBlocks_watchpoint_lr"+zero,
         "decryptSelfBlock_epilogue"+zero,
         "decryptSelfBlock_watchpoint"+zero,
         "decryptSelfBlock_watchpoint_lr"+zero,
@@ -347,6 +355,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         "sceSblServiceCryptAsync_deref_singleton"+zero,
         "sceSblServiceIsLoadable2"+zero,
         "sceSblServiceMailbox"+zero,
+        "sceSblServiceMailbox_lr_decryptMultipleSelfBlocks"+zero,
         "sceSblServiceMailbox_lr_decryptSelfBlock"+zero,
         "sceSblServiceMailbox_lr_loadSelfSegment"+zero,
         "sceSblServiceMailbox_lr_verifyHeader"+zero,
@@ -369,6 +378,8 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kdata_base - 0x9908e0, // copyin
         kdata_base - 0x990990, // copyout
         kdata_base - 0x479d60, // crypt_message_resolve
+        kdata_base - 0x8a47d2, // decryptMultipleSelfBlocks_epilogue
+        kdata_base - 0x8a4c55, // decryptMultipleSelfBlocks_watchpoint_lr
         kdata_base - 0x8a52c3, // decryptSelfBlock_epilogue
         kdata_base - 0x2cc88e, // decryptSelfBlock_watchpoint
         kdata_base - 0x8a538a, // decryptSelfBlock_watchpoint_lr
@@ -407,6 +418,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kdata_base - 0x8ed902, // sceSblServiceCryptAsync_deref_singleton
         kdata_base - 0x8a5c40, // sceSblServiceIsLoadable2
         kdata_base - 0x6824c0, // sceSblServiceMailbox
+        kdata_base - 0x8a488c, // sceSblServiceMailbox_lr_decryptMultipleSelfBlocks
         kdata_base - 0x8a5014, // sceSblServiceMailbox_lr_decryptSelfBlock
         kdata_base - 0x8a5541, // sceSblServiceMailbox_lr_loadSelfSegment
         kdata_base - 0x8a58bc, // sceSblServiceMailbox_lr_verifyHeader

@@ -65,7 +65,7 @@ xor rsp, rsp
 xchg rsp, [rel saved_rsp]
 test rsp, rsp
 jnz .unyield
-lea rsp, [rel stack+16384]
+lea rsp, [rel stack_end]
 mov rdi, rcx
 mov rsi, r8
 call main
@@ -90,5 +90,7 @@ wrmsr_args:
 resq 1
 stack:
 resb 16384
+align 16
+stack_end:
 saved_rsp:
 dq 0

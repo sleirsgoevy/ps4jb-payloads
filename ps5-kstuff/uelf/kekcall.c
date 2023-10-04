@@ -88,7 +88,7 @@ void handle_kekcall_trap(uint64_t* regs, uint32_t trap)
         pop_stack(regs, stack_frame, sizeof(stack_frame));
         if((uint32_t)regs[RAX])
         {
-            pop_stack(regs, regs+RIP, 8);
+            pop_stack(regs, &regs[RIP], 8);
             return;
         }
         uint32_t pid = stack_frame[5];
@@ -101,7 +101,7 @@ void handle_kekcall_trap(uint64_t* regs, uint32_t trap)
         if(!proc)
         {
             regs[RAX] = ESRCH;
-            pop_stack(regs, regs+RIP, 8);
+            pop_stack(regs, &regs[RIP], 8);
             return;
         }
         regs[RDI] = kpeek64(proc+16);

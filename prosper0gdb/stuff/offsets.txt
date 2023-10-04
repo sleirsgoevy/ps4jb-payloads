@@ -54,6 +54,8 @@ p/x $authmgr_loadSelfSegment_call_mailbox = kdata_base - 0x8a5546
 p/x $authmgr_decryptSelfBlock = kdata_base - 0x8a5410
 p/x $authmgr_decryptSelfBlock_call_mailbox = kdata_base - 0x8a5019
 
+p/x $authmgr_decryptMultipleSelfBlocks_call_mailbox = kdata_base - 0x8a4891
+
 p/x $sceSblPfsSetKeys = kdata_base - 0x94aaa0
 p/x $verifySuperBlock_call_mailbox = kdata_base - 0x94a7f5
 p/x $pfsunknown1_call_mailbox = kdata_base - 0x94a74f

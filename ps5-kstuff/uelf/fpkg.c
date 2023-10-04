@@ -36,19 +36,19 @@ static int handle_crypto_message(uint64_t msg)
     if((msg_data[0] & 0x7fffffff) == 0x9132000) // SHA256HMAC with key handle
     {
         int idx = HANDLE_TO_IDX(msg_data[20]);
-        log_word(0xfee10006dead0000|(uint16_t)idx);
+        //log_word(0xfee10006dead0000|(uint16_t)idx);
         if(idx < 0)
-            return 0;
+            return ENOSYS;
         uint8_t key[32];
         if(!get_fake_key(idx, key))
-            return 0;
+            return ENOSYS;
         if(msg_data[3] != msg_data[1] * 8)
-            return 0;
-        log_word(0xdead0006dead0007);
+            return ENOSYS;
+        //log_word(0xdead0006dead0007);
         uint8_t hash[32] = {0};
         if(pfs_hmac_virtual(hash, key, msg_data[2], msg_data[1]))
         {
-            log_word(0xfee1fee1fee1fee1);
+            //log_word(0xfee1fee1fee1fee1);
             return -1;
         }
         copy_to_kernel(msg+32, hash, 32);
@@ -57,26 +57,26 @@ static int handle_crypto_message(uint64_t msg)
     else if((msg_data[0] & 0x7ffff7ff) == 0x2108000) // AES-XTS decrypt/encrypt with key handle
     {
         int idx = HANDLE_TO_IDX(msg_data[5]);
-        log_word(0xfee10006dead0100|(uint16_t)idx|((msg_data[0]&0x800)<<4));
+        //log_word(0xfee10006dead0100|(uint16_t)idx|((msg_data[0]&0x800)<<4));
         if(idx < 0)
-            return 0;
+            return ENOSYS;
         uint8_t key[32];
         if(!get_fake_key(idx, key))
-            return 0;
-        log_word(0xdead0006dead0007);
+            return ENOSYS;
+        //log_word(0xdead0006dead0007);
         if(pfs_xts_virtual(msg_data[3], msg_data[2], key, msg_data[4], msg_data[1], (msg_data[0] & 0x800) >> 11))
         {
-            log_word(0xfee1fee1fee1fee1);
+            //log_word(0xfee1fee1fee1fee1);
             return -1;
         }
         else
             return 0;
     }
-    log_word(0xdead0006dead0006);
-    log_word(msg);
-    for(int i = 0; i < 32; i++)
-        log_word(msg_data[i]);
-    log_word(0xdead0006ffffffff);
+    //log_word(0xdead0006dead0006);
+    //log_word(msg);
+    /*for(int i = 0; i < 32; i++)
+        log_word(msg_data[i]);*/
+    //log_word(0xdead0006ffffffff);
     return ENOSYS;
 }
 
