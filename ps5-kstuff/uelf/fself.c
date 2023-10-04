@@ -76,8 +76,6 @@ extern char decryptMultipleSelfBlocks_watchpoint_lr[];
 extern char decryptMultipleSelfBlocks_epilogue[];
 extern char mini_syscore_header[];
 
-extern char kdata_base[];
-
 static void set_dbgregs_for_watchpoint(uint64_t* regs, const uint64_t* dbgregs, size_t frame_size)
 {
     uint64_t buf[frame_size/8 + 6];
@@ -226,6 +224,7 @@ int try_handle_fself_trap(uint64_t* regs)
                 else
                     p_authinfo = s_auth_info_for_exec;
             }
+            copy_to_kernel(regs[R8], p_authinfo, 0x88);
             pop_stack(regs, &regs[RIP], 8);
             regs[RAX] = 0;
             copy_to_kernel(regs[RDI] + 62, &(const uint16_t[1]){0xdeb7}, 2);

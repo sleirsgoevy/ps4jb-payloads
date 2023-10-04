@@ -150,6 +150,8 @@ from_userspace:
         return;
     else if(handle_fself_parasites(regs))
         return;
+    else if(handle_unsorted_parasites(regs))
+        return;
     else if(try_handle_fpkg_trap(regs))
         return;
     else if(try_handle_syscall_fix_trap(regs))

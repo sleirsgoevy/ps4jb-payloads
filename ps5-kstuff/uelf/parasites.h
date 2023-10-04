@@ -39,3 +39,19 @@ static int handle_fself_parasites(uint64_t* regs)
     return 0;
 #endif
 }
+
+static int handle_unsorted_parasites(uint64_t* regs)
+{
+#ifndef FREEBSD
+    if(regs[RIP] == (uint64_t)kdata_base - 0x479a0e)
+    {
+        regs[RAX] |= 0xffffull << 48;
+        regs[R15] |= 0xffffull << 48;
+    }
+    else
+        return 0;
+    return 1;
+#else
+    return 0;
+#endif
+}
