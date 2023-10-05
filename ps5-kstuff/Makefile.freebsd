@@ -1,7 +1,7 @@
 all: freebsd-loader
 
 clean:
-	rm -f payload.elf payload.bin freebsd-loader kelf kelf.o structs.h structs.inc uelf/uelf uelf/crt.o
+	rm -f payload.elf payload.bin payload-gdb.elf payload-gdb.bin freebsd-loader kelf kelf.o structs.h structs.inc uelf/uelf uelf/crt.o
 
 structs.inc: structs-freebsd.inc
 	cp structs-freebsd.inc structs.inc

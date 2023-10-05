@@ -1,7 +1,7 @@
-all: payload.bin
+all: payload.bin payload-gdb.bin
 
 clean:
-	rm -f payload.elf payload.bin freebsd-loader kelf kelf.o structs.h structs.inc uelf/uelf uelf/crt.o
+	rm -f payload.elf payload.bin payload-gdb.elf payload-gdb.bin freebsd-loader kelf kelf.o structs.h structs.inc uelf/uelf uelf/crt.o
 
 ../lib/lib.a:
 	cd ../lib; make
@@ -13,12 +13,14 @@ structs.inc: structs-ps5.inc
 	cp structs-ps5.inc structs.inc
 
 payload.elf: ../lib/lib.a ../prosper0gdb/prosper0gdb.o main.c kelf uelf/uelf
-	#gcc -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -static ../lib/lib.a ../prosper0gdb/prosper0gdb.o -DDEBUG main.c ../prosper0gdb/dbg.c -Wl,-gc-sections -o payload.elf -fPIE -ffreestanding
-	gcc -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -static ../lib/lib.a ../prosper0gdb/prosper0gdb.o -DDEBUG main.c ../prosper0gdb/dbg.c -o payload.elf -fPIE -ffreestanding
+	gcc -O0 -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -static ../lib/lib.a ../prosper0gdb/prosper0gdb.o main.c ../prosper0gdb/dbg.c -Wl,-gc-sections -o payload.elf -fPIE -ffreestanding
 
-payload.bin: payload.elf
-	objcopy payload.elf --only-section .text --only-section .data --only-section .bss --only-section .rodata -O binary payload.bin
-	file payload.bin | fgrep -q 'payload.bin: DOS executable (COM)'
+payload-gdb.elf: ../lib/lib.a ../prosper0gdb/prosper0gdb.o main.c utils.c kelf uelf/uelf
+	gcc -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -static ../lib/lib.a ../prosper0gdb/prosper0gdb.o -DDEBUG main.c ../prosper0gdb/dbg.c utils.c -o payload-gdb.elf -fPIE -ffreestanding
+
+payloa%.bin: payloa%.elf
+	objcopy $< --only-section .text --only-section .data --only-section .bss --only-section .rodata -O binary $@
+	file $@ | fgrep -q '$@: DOS executable (COM)'
 
 kelf.o: kelf.asm structs.inc
 	yasm -f elf64 -g dwarf2 kelf.asm -o kelf.o
