@@ -167,7 +167,7 @@ asm(".section .data\nkek:\n.incbin \"kelf\"\nkek_end:");
 extern char kek[];
 extern char kek_end[];
 
-asm(".section .data\nuek:\n.incbin \"uelf/uelf\"\nuek_end:");
+asm(".section .data\nuek:\n.incbin \"uelf/uelf.bin\"\nuek_end:");
 extern char uek[];
 extern char uek_end[];
 
