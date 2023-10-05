@@ -25,17 +25,26 @@ int register_fake_key(const char key_data[32])
     return key_idx;
 }
 
-void unregister_fake_key(int key_id)
+int unregister_fake_key(int key_id)
 {
+    if(key_id < 0 || key_id >= 63)
+        return 0;
     uint64_t mask, mask1;
     mask = __atomic_load_n(&shared_area.bitmask, __ATOMIC_ACQUIRE);
     do
+    {
+        if(!(mask & (1ull << key_id)))
+            return 0;
         mask1 = mask & ~(1ull << key_id);
+    }
     while(!__atomic_compare_exchange_n(&shared_area.bitmask, &mask, mask1, 1, __ATOMIC_RELEASE, __ATOMIC_ACQUIRE));
+    return 1;
 }
 
 int get_fake_key(int key_id, char key_data[32])
 {
+    if(key_id < 0 || key_id >= 63)
+        return 0;
     uint64_t mask = __atomic_load_n(&shared_area.bitmask, __ATOMIC_ACQUIRE);
     if(!(mask & (1ull << key_id)))
         return 0;

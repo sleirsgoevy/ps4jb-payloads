@@ -358,7 +358,10 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         "sceSblServiceMailbox_lr_decryptMultipleSelfBlocks"+zero,
         "sceSblServiceMailbox_lr_decryptSelfBlock"+zero,
         "sceSblServiceMailbox_lr_loadSelfSegment"+zero,
+        "sceSblServiceMailbox_lr_sceSblPfsClearKey_1"+zero,
+        "sceSblServiceMailbox_lr_sceSblPfsClearKey_2"+zero,
         "sceSblServiceMailbox_lr_verifyHeader"+zero,
+        "sceSblServiceMailbox_lr_verifySuperBlock"+zero,
         "shared_area"+zero,
         "soo_ioctl"+zero,
         "syscall_after"+zero,
@@ -369,7 +372,6 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         ".tss"+zero,
         ".uelf_cr3"+zero,
         ".uelf_entry"+zero,
-        "verifySuperBlock_call_mailbox"+zero,
         "wrmsr_ret"+zero,
         0,
     };
@@ -421,7 +423,10 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kdata_base - 0x8a488c, // sceSblServiceMailbox_lr_decryptMultipleSelfBlocks
         kdata_base - 0x8a5014, // sceSblServiceMailbox_lr_decryptSelfBlock
         kdata_base - 0x8a5541, // sceSblServiceMailbox_lr_loadSelfSegment
+        kdata_base - 0x94ada4, // sceSblServiceMailbox_lr_sceSblPfsClearKey_1
+        kdata_base - 0x94ad2e, // sceSblServiceMailbox_lr_sceSblPfsClearKey_2
         kdata_base - 0x8a58bc, // sceSblServiceMailbox_lr_verifyHeader
+        kdata_base - 0x94a7f0, // sceSblServiceMailbox_lr_verifySuperBlock
         shared_area, // shared_area
         kdata_base - 0x96eb98, // soo_ioctl
         kdata_base - 0x8022ee, // syscall_after
@@ -432,7 +437,6 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         0x123a,                // .tss
         0x1235,                // .uelf_cr3
         0x1236,                // .uelf_entry
-        kdata_base - 0x94a7f5, // verifySuperBlock_call_mailbox
         kdata_base - 0x9d20cc, // wrmsr_ret
         0,
     };

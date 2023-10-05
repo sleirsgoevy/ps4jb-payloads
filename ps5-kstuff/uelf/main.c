@@ -10,6 +10,7 @@
 #include "log.h"
 #include "traps.h"
 #include "kekcall.h"
+#include "mailbox.h"
 #include "fself.h"
 #include "fpkg.h"
 #include "syscall_fixes.h"
@@ -56,7 +57,8 @@ void handle_syscall(uint64_t* regs, int allow_kekcall)
          || IS(get_sdk_compiled_version)
          || IS_PPR(get_ppr_sdk_compiled_version))
         handle_fself_syscall(regs);
-    else if(IS(nmount))
+    else if(IS(nmount)
+         || IS(unmount))
         handle_fpkg_syscall(regs);
     else if(IS(mprotect)
          || IS_PPR(mdbg_call))
@@ -146,6 +148,8 @@ from_userspace:
         }
     }
 #ifndef FREEBSD
+    else if(try_handle_mailbox_trap(regs))
+        return;
     else if(try_handle_fself_trap(regs))
         return;
     else if(handle_fself_parasites(regs))

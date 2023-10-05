@@ -613,6 +613,8 @@ static void do_jprog(uint64_t* regs)
                 regs[3] += 8;
                 regs[5] = jprog[i+2];
             }
+            else if(jprog[i+1] == 22)
+                trace_prog = (void*)jprog[i+2];
         }
 }
 
@@ -1313,8 +1315,9 @@ static void trace_mailbox_for_fpkg(uint64_t* regs)
     {
         uint64_t lr;
         kmemcpy(&lr, (void*)regs[3], 8);
-        mailbox_lr[mailbox_n++] = lr;
-        if(mailbox_n <= n_faked_decrypts)
+        kmemcpy(mailbox_request+128*mailbox_n, (void*)regs[7], 128);
+        mailbox_lr[mailbox_n] = lr;
+        if(mailbox_n < n_faked_decrypts && mailbox_fakeresp[mailbox_n])
         {
             ekh++;
             skh++;
@@ -1322,9 +1325,10 @@ static void trace_mailbox_for_fpkg(uint64_t* regs)
             kmemcpy((void*)regs[11], stuff, 16);
             mailbox_rdx = regs[11];
             regs[0] = lr;
-            regs[5] = mailbox_fakeresp[mailbox_n-1];
+            regs[5] = mailbox_response[mailbox_n];
             regs[3] += 8;
         }
+        mailbox_n++;
         if(mailbox_n == n_faked_decrypts && trace_prog_after_mailbox)
             trace_prog = trace_prog_after_mailbox;
     }

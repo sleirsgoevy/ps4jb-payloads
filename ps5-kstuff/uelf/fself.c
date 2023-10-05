@@ -130,74 +130,77 @@ void handle_fself_trap(uint64_t* regs, uint32_t trapno)
     }
 }
 
-int try_handle_fself_trap(uint64_t* regs)
+int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
 {
-    if(regs[RIP] == (uint64_t)sceSblServiceMailbox)
+    if(lr == (uint64_t)sceSblServiceMailbox_lr_verifyHeader)
     {
-        uint64_t lr = kpeek64(regs[RSP]);
-        if(lr == (uint64_t)sceSblServiceMailbox_lr_verifyHeader)
+        uint64_t self_header = kpeek64(regs[R14] + 56);
+        uint32_t size;
+        copy_from_kernel(&size, regs[RDX]+16, 4);
+        if(is_header_fself(self_header, size, 0, 0, 0, 0))
         {
-            uint64_t self_header = kpeek64(regs[R14] + 56);
-            uint32_t size;
-            copy_from_kernel(&size, regs[RDX]+16, 4);
-            if(is_header_fself(self_header, size, 0, 0, 0, 0))
-            {
-                char fself_header_backup[(48 + mini_syscore_header_size + 15) & -16];
-                uint64_t trap_frame[6] = {
-                    (uint64_t)doreti_iret,
-                    MKTRAP(TRAP_FSELF, 1), 0, 0, 0, 0,
-                };
-                memcpy(fself_header_backup, trap_frame, 48);
-                copy_from_kernel(fself_header_backup+48, self_header, mini_syscore_header_size);
-                push_stack(regs, fself_header_backup, sizeof(fself_header_backup));
-                copy_from_kernel(fself_header_backup+48, (uint64_t)mini_syscore_header, mini_syscore_header_size);
-                copy_to_kernel(self_header, fself_header_backup+48, mini_syscore_header_size);
-                size = mini_syscore_header_size;
-                copy_to_kernel(regs[RDX]+16, &size, 4);
-            }
-        }
-        else if(lr == (uint64_t)sceSblServiceMailbox_lr_loadSelfSegment)
-        {
-            uint64_t ctx[8];
-            copy_from_kernel(ctx, regs[RBX], sizeof(ctx));
-            if(is_header_fself(ctx[7], (uint32_t)ctx[1], 0, 0, 0, 0))
-            {
-                pop_stack(regs, &regs[RIP], 8);
-                regs[RAX] = 0;
-            }
-        }
-        else if(lr == (uint64_t)sceSblServiceMailbox_lr_decryptSelfBlock)
-        {
-            uint64_t ctx[8];
-            copy_from_kernel(ctx, kpeek64(regs[RBP] - sceSblServiceMailbox_decryptSelfBlock_rsp_to_rbp + sceSblServiceMailbox_decryptSelfBlock_rsp_to_self_context), sizeof(ctx));
-            if(is_header_fself(ctx[7], (uint32_t)ctx[1], 0, 0, 0, 0))
-            {
-                uint64_t request[8];
-                copy_from_kernel(request, regs[RDX], sizeof(request));
-                memcpy(DMEM+request[1], DMEM+request[2], (uint32_t)request[6]);
-                pop_stack(regs, &regs[RIP], 8);
-                regs[RAX] = 0;
-            }
-        }
-        else if(lr == (uint64_t)sceSblServiceMailbox_lr_decryptMultipleSelfBlocks)
-        {
-            uint64_t ctx[8];
-            copy_from_kernel(ctx, regs[R13], sizeof(ctx));
-            if(is_header_fself(ctx[7], (uint32_t)ctx[1], 0, 0, 0, 0))
-            {
-                uint64_t request[8];
-                copy_from_kernel(request, regs[RDX], sizeof(request));
-                uint64_t* src = (uint64_t*)(DMEM + request[1]);
-                uint64_t* dst = (uint64_t*)(DMEM + request[2]);
-                uint32_t count = request[5];
-                for(uint32_t i = 0; i < count; i++)
-                    memcpy(DMEM+dst[i], DMEM+src[i], 16384);
-                pop_stack(regs, &regs[RIP], 8);
-                regs[RAX] = 0;
-            }
+            char fself_header_backup[(48 + mini_syscore_header_size + 15) & -16];
+            uint64_t trap_frame[6] = {
+                (uint64_t)doreti_iret,
+                MKTRAP(TRAP_FSELF, 1), 0, 0, 0, 0,
+            };
+            memcpy(fself_header_backup, trap_frame, 48);
+            copy_from_kernel(fself_header_backup+48, self_header, mini_syscore_header_size);
+            push_stack(regs, fself_header_backup, sizeof(fself_header_backup));
+            copy_from_kernel(fself_header_backup+48, (uint64_t)mini_syscore_header, mini_syscore_header_size);
+            copy_to_kernel(self_header, fself_header_backup+48, mini_syscore_header_size);
+            size = mini_syscore_header_size;
+            copy_to_kernel(regs[RDX]+16, &size, 4);
         }
     }
-    else if(regs[RIP] == (uint64_t)sceSblServiceIsLoadable2)
+    else if(lr == (uint64_t)sceSblServiceMailbox_lr_loadSelfSegment)
+    {
+        uint64_t ctx[8];
+        copy_from_kernel(ctx, regs[RBX], sizeof(ctx));
+        if(is_header_fself(ctx[7], (uint32_t)ctx[1], 0, 0, 0, 0))
+        {
+            pop_stack(regs, &regs[RIP], 8);
+            regs[RAX] = 0;
+        }
+    }
+    else if(lr == (uint64_t)sceSblServiceMailbox_lr_decryptSelfBlock)
+    {
+        uint64_t ctx[8];
+        copy_from_kernel(ctx, kpeek64(regs[RBP] - sceSblServiceMailbox_decryptSelfBlock_rsp_to_rbp + sceSblServiceMailbox_decryptSelfBlock_rsp_to_self_context), sizeof(ctx));
+        if(is_header_fself(ctx[7], (uint32_t)ctx[1], 0, 0, 0, 0))
+        {
+            uint64_t request[8];
+            copy_from_kernel(request, regs[RDX], sizeof(request));
+            memcpy(DMEM+request[1], DMEM+request[2], (uint32_t)request[6]);
+            pop_stack(regs, &regs[RIP], 8);
+            regs[RAX] = 0;
+        }
+    }
+    else if(lr == (uint64_t)sceSblServiceMailbox_lr_decryptMultipleSelfBlocks)
+    {
+        uint64_t ctx[8];
+        copy_from_kernel(ctx, regs[R13], sizeof(ctx));
+        if(is_header_fself(ctx[7], (uint32_t)ctx[1], 0, 0, 0, 0))
+        {
+            uint64_t request[8];
+            copy_from_kernel(request, regs[RDX], sizeof(request));
+            uint64_t* src = (uint64_t*)(DMEM + request[1]);
+            uint64_t* dst = (uint64_t*)(DMEM + request[2]);
+            uint32_t count = request[5];
+            for(uint32_t i = 0; i < count; i++)
+                memcpy(DMEM+dst[i], DMEM+src[i], 16384);
+            pop_stack(regs, &regs[RIP], 8);
+            regs[RAX] = 0;
+        }
+    }
+    else
+        return 0;
+    return 1;
+}
+
+int try_handle_fself_trap(uint64_t* regs)
+{
+    if(regs[RIP] == (uint64_t)sceSblServiceIsLoadable2)
     {
         uint64_t ctx[8];
         copy_from_kernel(ctx, regs[RDI], sizeof(ctx));

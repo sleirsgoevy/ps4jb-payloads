@@ -7,8 +7,10 @@
 #include "pfs_crypto.h"
 #include "fakekeys.h"
 
-extern char verifySuperBlock_call_mailbox[];
 extern char sceSblServiceMailbox[];
+extern char sceSblServiceMailbox_lr_verifySuperBlock[];
+extern char sceSblServiceMailbox_lr_sceSblPfsClearKey_1[];
+extern char sceSblServiceMailbox_lr_sceSblPfsClearKey_2[];
 extern char sceSblServiceCryptAsync_deref_singleton[];
 extern char crypt_message_resolve[];
 extern char doreti_iret[];
@@ -112,7 +114,22 @@ static int handle_crypto_request(uint64_t* regs)
 
 int try_handle_fpkg_trap(uint64_t* regs)
 {
-    if(regs[RIP] == (uint64_t)verifySuperBlock_call_mailbox)
+    if(regs[RIP] == (uint64_t)sceSblServiceCryptAsync_deref_singleton)
+    {
+        if(!handle_crypto_request(regs))
+        {
+            regs[RAX] |= -1ull << 48;
+            regs[RBX] |= -1ull << 48;
+        }
+    }
+    else
+        return 0;
+    return 1;
+}
+
+int try_handle_fpkg_mailbox(uint64_t* regs, uint64_t lr)
+{
+    if(lr == (uint64_t)sceSblServiceMailbox_lr_verifySuperBlock)
     {
         uint64_t req[8];
         copy_from_kernel(req, regs[RDX], 64);
@@ -131,22 +148,52 @@ int try_handle_fpkg_trap(uint64_t* regs)
                 int key2 = register_fake_key(sk);
                 if(key2 >= 0)
                 {
-                    regs[RIP] += 5;
+                    regs[RIP] = lr;
                     regs[RAX] = 0;
+                    regs[RSP] += 8;
                     uint32_t fake_resp[4] = {0, 0, IDX_TO_HANDLE(key1), IDX_TO_HANDLE(key2)};
                     copy_to_kernel(regs[RDX], fake_resp, sizeof(fake_resp));
                 }
             }
         }
     }
-    else if(regs[RIP] == (uint64_t)sceSblServiceCryptAsync_deref_singleton)
+    else if(lr == (uint64_t)sceSblServiceMailbox_lr_sceSblPfsClearKey_1
+         || lr == (uint64_t)sceSblServiceMailbox_lr_sceSblPfsClearKey_2)
     {
-        if(!handle_crypto_request(regs))
+        uint32_t handle = kpeek64(regs[RDX]+8);
+        int key = HANDLE_TO_IDX(handle);
+        if(key >= 0 && unregister_fake_key(key))
         {
-            regs[RAX] |= -1ull << 48;
-            regs[RBX] |= -1ull << 48;
+            copy_to_kernel(regs[RDX], (const uint64_t[16]){}, 16);
+            regs[RIP] = lr;
+            regs[RAX] = 0;
+            regs[RSP] += 8;
         }
     }
+    /*else
+    {
+        uint64_t req[2];
+        copy_from_kernel(req, regs[RDX], sizeof(req));
+        if((uint32_t)req[0] == 3)
+        {
+            log_word(0x4141414141414141);
+            log_word(req[0]);
+            log_word(req[1]);
+            int key = HANDLE_TO_IDX(req[1]);
+            log_word(key);
+            if(key >= 0 && unregister_fake_key(key))
+            {
+                log_word(0x4141414141414142);
+                log_word(lr);
+                copy_to_kernel(regs[RDX], (const uint64_t[16]){}, 128);
+                regs[RIP] = lr;
+                regs[RAX] = 0;
+                regs[RSP] += 8;
+                return 1;
+            }
+        }
+        return 0;
+    }*/
     else
         return 0;
     return 1;
@@ -167,7 +214,10 @@ void handle_fpkg_trap(uint64_t* regs, uint32_t trapno)
     }
 }
 
-static const uint64_t dbgregs_for_nmount[6] = {0x1337, (uint64_t)verifySuperBlock_call_mailbox, 0, 0, 0, 0x404};
+static const uint64_t dbgregs_for_nmount[6] = {
+    (uint64_t)sceSblServiceMailbox, 0, 0, 0,
+    0, 0x401
+};
 
 void handle_fpkg_syscall(uint64_t* regs)
 {
