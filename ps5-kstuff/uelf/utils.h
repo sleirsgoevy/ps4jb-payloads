@@ -8,7 +8,8 @@ extern uint64_t cr3_phys;
 extern uint64_t trap_frame;
 extern char pcpu[];
 
-#define DMEM ((char*)(1ull << 39))
+extern char dmem[];
+#define DMEM dmem
 
 int virt2phys(uint64_t addr, uint64_t* phys, uint64_t* phys_limit);
 int copy_from_kernel(void* dst, uint64_t src, uint64_t sz);

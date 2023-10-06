@@ -219,27 +219,39 @@ uint64_t virt2phys(uintptr_t addr)
     //unreachable
 }
 
-void build_uelf_cr3(uint64_t uelf_cr3, void* uelf_base[2])
+uint64_t find_empty_pml4_index(int idx)
+{
+    uint64_t dmap = get_dmap_base();
+    uint64_t cr3 = r0gdb_read_cr3();
+    uint64_t pml4[512];
+    copyout(pml4, dmap+cr3, 4096);
+    for(int i = 256; i < 512; i++)
+        if(!pml4[i] && !idx--)
+            return i;
+}
+
+void build_uelf_cr3(uint64_t uelf_cr3, void* uelf_base[2], uint64_t uelf_virt_base, uint64_t dmap_virt_base)
 {
     static char zeros[4096];
     uint64_t dmap = get_dmap_base();
     uint64_t cr3 = r0gdb_read_cr3();
     uint64_t user_start = (uint64_t)uelf_base[0];
     uint64_t user_end = (uint64_t)uelf_base[1];
-    if(user_end - user_start > 0x200000)
+    if((uelf_virt_base & 0x1fffff) || (dmap_virt_base & ((1ull << 39) - 1)) || user_end - user_start > 0x200000)
         asm volatile("ud2");
     uint64_t pml4_virt = uelf_cr3;
     copyin(pml4_virt, zeros, 4096);
     kmemcpy((void*)(pml4_virt+2048), (void*)(dmap+cr3+2048), 2048);
     uint64_t pml3_virt = uelf_cr3 + 4096;
     uint64_t pml3_dmap = uelf_cr3 + 16384; //user-accessible direct mapping of physical memory
-    copyin(pml4_virt, &(uint64_t[2]){virt2phys(pml3_virt) | 7, virt2phys(pml3_dmap) | 7}, 16);
+    copyin(pml4_virt + 8 * ((uelf_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys(pml3_virt) | 7}, 8);
+    copyin(pml4_virt + 8 * ((dmap_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys(pml3_dmap) | 7}, 8);
     copyin(pml3_virt, zeros, 4096);
     uint64_t pml2_virt = uelf_cr3 + 8192;
-    copyin(pml3_virt, &(uint64_t[1]){virt2phys(pml2_virt) | 7}, 8);
+    copyin(pml3_virt + 8 * ((uelf_virt_base >> 30) & 511), &(uint64_t[1]){virt2phys(pml2_virt) | 7}, 8);
     copyin(pml2_virt, zeros, 4096);
     uint64_t pml1_virt = uelf_cr3 + 12288;
-    copyin(pml2_virt+16, &(uint64_t[1]){virt2phys(pml1_virt) | 7}, 8);
+    copyin(pml2_virt + 8 * ((uelf_virt_base >> 21) & 511), &(uint64_t[1]){virt2phys(pml1_virt) | 7}, 8);
     copyin(pml1_virt, zeros, 4096);
     for(uint64_t i = 0; i * 4096 + user_start < user_end; i++)
         copyin(pml1_virt+8*i, &(uint64_t[1]){virt2phys(i*4096+user_start) | 7}, 8);
@@ -373,7 +385,9 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     uint64_t shared_area = (uint64_t)kmalloc(8192);
     shared_area = ((shared_area - 1) | 4095) + 1;
     kmemzero((void*)shared_area, 4096);
-    shared_area = virt2phys(shared_area) + (1ull << 39);
+    uint64_t uelf_virt_base = (find_empty_pml4_index(0) << 39) | (-1ull << 48);
+    uint64_t dmem_virt_base = (find_empty_pml4_index(1) << 39) | (-1ull << 48);
+    shared_area = virt2phys(shared_area) + dmem_virt_base;
     volatile int zero = 0; //hack to force runtime calculation of string pointers
     const char* symbols[] = {
         "add_rsp_iret"+zero,
@@ -385,6 +399,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         "decryptSelfBlock_epilogue"+zero,
         "decryptSelfBlock_watchpoint"+zero,
         "decryptSelfBlock_watchpoint_lr"+zero,
+        "dmem"+zero,
         "doreti_iret"+zero,
         "dr2gpr_end"+zero,
         "dr2gpr_start"+zero,
@@ -450,6 +465,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kdata_base - 0x8a52c3, // decryptSelfBlock_epilogue
         kdata_base - 0x2cc88e, // decryptSelfBlock_watchpoint
         kdata_base - 0x8a538a, // decryptSelfBlock_watchpoint_lr
+        dmem_virt_base,        // dmem
         kdata_base - 0x9cf84c, // doreti_iret
         kdata_base - 0x9d6d7c, // dr2gpr_end
         kdata_base - 0x9d6d93, // dr2gpr_start
@@ -545,16 +561,16 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         values[tss_idx] = TSS(cpu);
         void* uelf_entry = 0;
         void* uelf_base[2] = {0};
-        char* uelf = load_kelf(uek, symbols, values, uelf_base, &uelf_entry, 0x400000);
+        char* uelf = load_kelf(uek, symbols, values, uelf_base, &uelf_entry, uelf_virt_base);
         uintptr_t uelf_cr3 = (uintptr_t)kmalloc(24576);
         uelf_cr3 = ((uelf_cr3 + 4095) | 4095) - 4095;
         uelf_cr3s[cpu] = uelf_cr3;
         values[uelf_cr3_idx] = virt2phys(uelf_cr3);
-        values[uelf_entry_idx] = (uintptr_t)uelf_entry - (uintptr_t)uelf_base[0] + 0x400000;
+        values[uelf_entry_idx] = (uintptr_t)uelf_entry - (uintptr_t)uelf_base[0] + uelf_virt_base;
         void* entry = 0;
         void* base[2] = {0};
         char* kelf = load_kelf(kek, symbols, values, base, &entry, 0);
-        build_uelf_cr3(uelf_cr3, uelf_base);
+        build_uelf_cr3(uelf_cr3, uelf_base, uelf_virt_base, dmem_virt_base);
         uelf_bases[cpu] = (uintptr_t)uelf;
         kelf_bases[cpu] = (uint64_t)kelf;
         kelf_entries[cpu] = (uint64_t)entry;
@@ -607,6 +623,18 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     copyin(IDT+16*9+5, "\x8e", 1);
     copyin(IDT+16*179+5, "\x8e", 1);
     patch_shellcore();
+#ifndef DEBUG
+    {
+        struct
+        {
+            char pad1[0x10];
+            int f1;
+            char pad2[0x19];
+            char msg[0xc03];
+        } notification = { .f1 = -1, .msg = "ps5-kstuff successfully loaded" };
+        ((void(*)())dlsym((void*)0x2001, "sceKernelSendNotificationRequest"))(0, &notification, 0xc30, 0);
+    }
+#endif
     asm volatile("ud2");
     return 0;
 }
