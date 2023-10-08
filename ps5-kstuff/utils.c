@@ -15,6 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "../prosper0gdb/r0gdb.h"
+#include "../gdb_stub/dbg.h"
 
 extern uint64_t kdata_base;
 
@@ -53,6 +54,28 @@ struct module_info_ex
 };
 
 int find_proc(const char* name);
+
+void list_proc(void)
+{
+    for(int pid = 1; pid < 1024; pid++)
+    {
+        size_t sz = 1096;
+        int key[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};
+        char buf[1097] = {0};
+        sysctl(key, 4, buf, &sz, 0, 0);
+        char* name = buf + 447;
+        if(!*name)
+            continue;
+        *--name = ' ';
+        for(int q = pid; q; q /= 10)
+            *--name = '0' + q % 10;
+        size_t l = 0;
+        while(name[l])
+            l++;
+        name[l++] = '\n';
+        gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)name, (uintptr_t)l);
+    }
+}
 
 #define KEKCALL_GETPPID        0x000000027
 #define KEKCALL_READ_DR        0x100000027

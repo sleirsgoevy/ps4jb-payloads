@@ -261,11 +261,11 @@ void build_uelf_cr3(uint64_t uelf_cr3, void* uelf_base[2], uint64_t uelf_virt_ba
 
 int find_proc(const char* name)
 {
-    char buf[1097] = {0};
     for(int pid = 1; pid < 1024; pid++)
     {
         size_t sz = 1096;
         int key[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};
+        char buf[1097] = {0};
         sysctl(key, 4, buf, &sz, 0, 0);
         const char* a = buf + 447;
         const char* b = name;
@@ -344,6 +344,9 @@ static void patch_shellcore(void)
         {shellcore_base+0x536e1d, "\x90\xe9", 2},
         {shellcore_base+0x54db8f, "\xeb", 1},
         {shellcore_base+0x55137a, "\xc8\x00\x00\x00", 4},
+        {shellcore_base+0x1a12d1, "\xe8\xea\x88\x47\x00\x31\xc9\xff\xc1\xe9\xf4\x02\x00\x00", 14},
+        {shellcore_base+0x1a15d3, "\x83\xf8\x02\x0f\x43\xc1\xe9\x29\xfa\xff\xff", 11},
+        {shellcore_base+0x1a0fe5, "\xe9\xe7\x02\x00\x00", 5},
     };
     for(int i = 0; i < sizeof(patches) / sizeof(*patches); i++)
     {
@@ -358,6 +361,8 @@ static void patch_shellcore(void)
 #define dbg_enter()
 #define gdb_remote_syscall(...)
 #endif
+
+void patch_app_db(void);
 
 int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
@@ -613,7 +618,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         q |= 1;
         copyin(kdata_base + 0x6506500, &q, 4);
     }
-    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
+    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\npatching shellcore... ", (uintptr_t)27);
     p_kekcall = (char*)dlsym((void*)0x2001, "getpid") + 7;
     //restore the gdb_stub's SIGTRAP handler
     struct sigaction sa;
@@ -623,6 +628,9 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     copyin(IDT+16*9+5, "\x8e", 1);
     copyin(IDT+16*179+5, "\x8e", 1);
     patch_shellcore();
+    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\npatching app.db... ", (uintptr_t)24);
+    patch_app_db();
+    gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
 #ifndef DEBUG
     {
         struct
