@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 #include <netinet/ip6.h>
 #include "r0gdb.h"
+#include "offsets.h"
 
 //#define CPU_2 //TODO: run on any cpu
 
@@ -98,7 +99,7 @@ uint64_t rpipe;
 static void init_pipe(void)
 {
     pipe(the_pipe);
-    proc = kread8(kdata_base + 0x27edcb8);
+    proc = kread8(offsets.allproc);
     while(proc && (int)kread8(proc+0xbc) != getpid())
         proc = kread8(proc);
     if(!proc)
@@ -228,13 +229,9 @@ void r0gdb_setup(int do_swapgs)
     cpuset_setaffinity(3, 1, *((int*(*)())dlsym((void*)0x2001, "pthread_self"))(), 16, (void*)affinity);
 #endif
     //resolve addresses
-    uint64_t gdt = kdata_base + 0x64cee30;
-    uint64_t idt = kdata_base + 0x64cdc80;
-    uint64_t tss = kdata_base + 0x64d0830;
-    iret = kdata_base - 0x9cf84c;
-    volatile uint64_t add_rsp_0xe8_iret = iret - 7;
-    volatile uint64_t swapgs_add_rsp_0xe8_iret = iret - 10;
-    uint64_t memcpy_addr = kdata_base - 0x990a55;
+    iret = offsets.doreti_iret;
+    volatile uint64_t add_rsp_0xe8_iret = offsets.add_rsp_iret;
+    volatile uint64_t swapgs_add_rsp_0xe8_iret = offsets.swapgs_add_rsp_iret;
     //set up alternative stacks on all cpus
     uint64_t gadget_stack = kmalloc(2048);
 #ifdef CPU_2
@@ -243,7 +240,7 @@ void r0gdb_setup(int do_swapgs)
     for(int cpu = 0; cpu < 16; cpu++)
 #endif
     {
-        uint64_t tss_for_cpu = tss + cpu * 0x68;
+        uint64_t tss_for_cpu = offsets.tss_array + cpu * 0x68;
         char utss[0x68];
         copyout(utss, tss_for_cpu, 0x68);
         if(cpu == 13)
@@ -261,7 +258,7 @@ void r0gdb_setup(int do_swapgs)
     kwrite20(tframe+16, 2, kframe, 0);
     //set up int179 frames
     kwrite20(gadget_stack+0x408, 0, iret, 0);
-    kwrite20(gadget_stack+0x500, memcpy_addr, 0x20, 0);
+    kwrite20(gadget_stack+0x500, offsets.rep_movsb_pop_rbp_ret, 0x20, 0);
     kwrite20(gadget_stack+0x510, 0x40002, gadget_stack+0x408, 0);
     //set up gates
     volatile char* addr = do_swapgs ? (void*)&swapgs_add_rsp_0xe8_iret : (void*)&add_rsp_0xe8_iret;
@@ -277,14 +274,14 @@ void r0gdb_setup(int do_swapgs)
     gate[9] = addr[5];
     gate[10] = addr[6];
     gate[11] = addr[7];
-    copyin(idt+1*16, gate, 16);
+    copyin(offsets.idt+1*16, gate, 16);
     if(do_swapgs == 2)
-        copyin(idt+6*16, gate, 16);
+        copyin(offsets.idt+6*16, gate, 16);
     gate[4] = 3;
     gate[5] = 0xee;
-    copyin(idt+9*16, gate, 16);
+    copyin(offsets.idt+9*16, gate, 16);
     gate[4] = 6;
-    copyin(idt+179*16, gate, 16);
+    copyin(offsets.idt+179*16, gate, 16);
     init_run = 1;
 }
 
@@ -321,7 +318,7 @@ void r0gdb(void)
 uint64_t r0gdb_rdmsr(uint32_t ecx)
 {
     struct regs regs = {0};
-    regs.rip = kdata_base - 0x9d0cfa;
+    regs.rip = offsets.rdmsr_start;
     regs.rsp = kstack;
     regs.rcx = ecx;
     regs.eflags = 0x102;
@@ -332,7 +329,7 @@ uint64_t r0gdb_rdmsr(uint32_t ecx)
 void r0gdb_wrmsr(uint32_t ecx, uint64_t value)
 {
     struct regs regs = {0};
-    regs.rip = kdata_base - 0x9cf8bb;
+    regs.rip = offsets.wrmsr_ret;
     regs.rsp = kstack;
     regs.rcx = ecx;
     regs.rax = value;
@@ -344,7 +341,7 @@ void r0gdb_wrmsr(uint32_t ecx, uint64_t value)
 void r0gdb_read_dbregs(uint64_t* out)
 {
     struct regs regs = {0};
-    regs.rip = kdata_base - 0x9d6d93;
+    regs.rip = offsets.dr2gpr_start;
     regs.rsp = kstack;
     regs.eflags = 0x102;
     for(int i = 0; i < 6; i++)
@@ -370,7 +367,7 @@ uint64_t r0gdb_read_dbreg(int which)
 void r0gdb_write_dbregs(uint64_t* inp)
 {
     struct regs regs = {0};
-    regs.rip = kdata_base - 0x9d6c7a;
+    regs.rip = offsets.gpr2dr_1_start;
     regs.rsp = kstack;
     regs.eflags = 0x102;
     regs.r15 = inp[0];
@@ -384,7 +381,7 @@ void r0gdb_write_dbregs(uint64_t* inp)
         run_in_kernel(&regs);
     regs.r11 = inp[4];
     regs.r15 = inp[5];
-    regs.rip = kdata_base - 0x9d6b87;
+    regs.rip = offsets.gpr2dr_2_start;
     for(int i = 0; i < 3; i++)
         run_in_kernel(&regs);
 }
@@ -403,7 +400,7 @@ void r0gdb_write_dbreg(int which, uint64_t value)
 uint64_t r0gdb_read_cr3(void)
 {
     struct regs regs = {0};
-    regs.rip = kdata_base - 0x39700e;
+    regs.rip = offsets.mov_rdi_cr3;
     regs.rsp = kstack;
     regs.eflags = 0x102;
     run_in_kernel(&regs);
@@ -413,7 +410,7 @@ uint64_t r0gdb_read_cr3(void)
 void r0gdb_write_cr3(uint64_t cr3)
 {
     struct regs regs = {0};
-    regs.rip = kdata_base - 0x396f9e;
+    regs.rip = offsets.mov_cr3_rax;
     regs.rsp = kstack;
     regs.eflags = 0x102;
     regs.rax = cr3;
@@ -560,7 +557,7 @@ static void eat_count(uint64_t* regs)
 static void untrace_fn(uint64_t* regs)
 {
     uint64_t rsp = regs[3];
-    uint64_t ret_gadget = kdata_base - 0x28a3a0;
+    uint64_t ret_gadget = offsets.nop_ret;
     uint64_t frame[6] = {iret, ret_gadget, 0x20, regs[2], rsp, 0};
     rsp -= 0x30;
     kmemcpy((void*)rsp, frame, 48);
@@ -569,7 +566,7 @@ static void untrace_fn(uint64_t* regs)
 }
 
 #define SKIP_SCHEDULER\
-    if(regs[0] == kdata_base - 0x9d6f80)\
+    if(regs[0] == offsets.cpu_switch)\
     {\
         untrace_fn(regs);\
         return;\
@@ -681,8 +678,8 @@ static void end_call_trace(void)
 static void fix_mprotect(uint64_t* regs)
 {
     SKIP_SCHEDULER
-    if(regs[0] == kdata_base - 0x90ac61)
-        regs[0] += 6;
+    if(regs[0] == offsets.mprotect_fix_start)
+        regs[0] = offsets.mprotect_fix_end;
 }
 
 int mprotect20(void* addr, size_t sz, int prot)
@@ -699,14 +696,10 @@ int mprotect20(void* addr, size_t sz, int prot)
 static void fix_mmap_self(uint64_t* regs)
 {
     SKIP_SCHEDULER
-    /*if(regs[0] == kdata_base - 0x616700
-    || regs[0] == kdata_base - 0x615c30
-    || regs[0] == kdata_base - 0x798420)
-        untrace_fn(regs);
-    else*/ if(regs[0] == kdata_base - 0x2cd31d)
-        regs[0] += 2;
-    else if(regs[0] == kdata_base - 0x1df2ce)
-        regs[0] += 2;
+    if(regs[0] == offsets.mmap_self_fix_1_start)
+        regs[0] = offsets.mmap_self_fix_1_end;
+    else if(regs[0] == offsets.mmap_self_fix_2_start)
+        regs[0] = offsets.mmap_self_fix_2_end;
 }
 
 void* mmap20(void* addr, size_t sz, int prot, int flags, int fd, off_t offset)
@@ -723,14 +716,15 @@ void* mmap20(void* addr, size_t sz, int prot, int flags, int fd, off_t offset)
 static uint64_t sys_write;
 static uint64_t sys_sigaction;
 static uint64_t sys_mdbg_call;
+static uint64_t sys_getpid;
 
 static void fix_sigaction_17_9(uint64_t* regs)
 {
     SKIP_SCHEDULER
     if(regs[0] == sys_write)
         regs[0] = sys_sigaction;
-    else if(regs[0] == kdata_base - 0x6c2989)
-        regs[0] = kdata_base - 0x6c2933;
+    else if(regs[0] == offsets.sigaction_fix_start)
+        regs[0] = offsets.sigaction_fix_end;
 }
 
 int sigaction20(int sig, const struct sigaction* neww, struct sigaction* oldd)
@@ -741,9 +735,9 @@ int sigaction20(int sig, const struct sigaction* neww, struct sigaction* oldd)
     int(*p_write)(int, const void*, void*) = dlsym((void*)0x2001, "_write");
     trace_prog = fix_sigaction_17_9;
     if(!sys_write)
-        kmemcpy(&sys_write, (void*)(kdata_base + 0x1709c0 + 48*SYS_write + 8), 8);
+        kmemcpy(&sys_write, (void*)(offsets.sysents + 48*SYS_write + 8), 8);
     if(!sys_sigaction)
-        kmemcpy(&sys_sigaction, (void*)(kdata_base + 0x1709c0 + 48*SYS_sigaction + 8), 8);
+        kmemcpy(&sys_sigaction, (void*)(offsets.sysents + 48*SYS_sigaction + 8), 8);
     set_trace();
     int ans = p_write(sig, neww, oldd);
     trace_prog = 0;
@@ -758,7 +752,7 @@ static void filter_dump_authinfo(uint64_t* regs)
     static uint64_t lr;
     static uint64_t r8;
     SKIP_SCHEDULER
-    if(regs[0] == kdata_base - 0x8a5c40) //sceSblAuthMgrIsLoadable2
+    if(regs[0] == offsets.sceSblAuthMgrIsLoadable2)
     {
         kmemcpy(&lr, (void*)regs[3], 8);
         r8 = regs[13];
@@ -795,7 +789,7 @@ static void fix_mdbg_call(uint64_t* regs)
     SKIP_SCHEDULER
     if(regs[0] == sys_write)
         regs[0] = sys_mdbg_call;
-    else if(regs[0] == kdata_base - 0x631ea9)
+    else if(regs[0] == offsets.mdbg_call_fix)
         regs[5] = 1;
 }
 
@@ -805,9 +799,9 @@ int mdbg_call_20(void* a, void* b, void* c)
     int(*p_write)(void*, void*, void*) = dlsym((void*)0x2001, "_write");
     trace_prog = fix_mdbg_call;
     if(!sys_write)
-        kmemcpy(&sys_write, (void*)(kdata_base + 0x1709c0 + 48*SYS_write + 8), 8);
+        kmemcpy(&sys_write, (void*)(offsets.sysents + 48*SYS_write + 8), 8);
     if(!sys_mdbg_call)
-        kmemcpy(&sys_mdbg_call, (void*)(kdata_base + 0x1709c0 + 48*573 + 8), 8);
+        kmemcpy(&sys_mdbg_call, (void*)(offsets.sysents + 48*573 + 8), 8);
     set_trace();
     int ans = p_write(a, b, c);
     trace_prog = 0;
@@ -821,7 +815,7 @@ static uint64_t fncall_ans = 0;
 static void getpid_to_fncall(uint64_t* regs)
 {
     SKIP_SCHEDULER
-    if(regs[0] == kdata_base - 0x967e88)
+    if(regs[0] == sys_getpid)
     {
         regs[0] = fncall_fn;
         regs[12] = fncall_args[0];
@@ -832,7 +826,7 @@ static void getpid_to_fncall(uint64_t* regs)
         regs[14] = fncall_args[5];
         untrace_fn(regs);
     }
-    else if(regs[0] == kdata_base - 0x8022ee)
+    else if(regs[0] == offsets.syscall_after)
     {
         fncall_ans = regs[5];
         regs[5] = 0;
@@ -851,6 +845,8 @@ uint64_t r0gdb_kfncall(uint64_t fn, ...)
     r0gdb_instrument(0);
     void(*p_getpid)(void) = (void*)dlsym((void*)0x2001, "getpid");
     trace_prog = getpid_to_fncall;
+    if(!sys_getpid)
+        kmemcpy(&sys_getpid, (void*)(offsets.sysents + 48*SYS_getpid + 8), 8);
     set_trace();
     p_getpid();
     return fncall_ans;
@@ -858,8 +854,8 @@ uint64_t r0gdb_kfncall(uint64_t fn, ...)
 
 uint64_t r0gdb_kmalloc(size_t sz)
 {
-    //return r0gdb_kfncall(kdata_base - 0xa9b00, sz, kdata_base + 0x1346080, 2 /* M_WAITOK */);
-    return r0gdb_kfncall(kdata_base - 0xa9b00, sz, kdata_base + 0x1346080, 1 /* M_NOWAIT */);
+    //return r0gdb_kfncall(offsets.malloc, sz, offsets.M_something, 2 /* M_WAITOK */);
+    return r0gdb_kfncall(offsets.malloc, sz, offsets.M_something, 1 /* M_NOWAIT */);
 }
 
 static uint64_t instr_start;
@@ -944,10 +940,7 @@ static uint64_t get_last_unique(void)
 static void filter_sm_service(uint64_t* regs)
 {
     SKIP_SCHEDULER
-    /*for(size_t i = 5; i < 21; i++)
-        if(regs[i] == kdata_base + 0x3cf169)
-            instrs_left = 100000;*/
-    if(regs[0] == kdata_base - 0x6824c0) //sceSblServiceMailbox
+    if(regs[0] == offsets.sceSblServiceMailbox)
     {
         kmemcpy(regs+15, (void*)regs[3], 8);
         instrs_left = 100000;
@@ -958,6 +951,7 @@ static void filter_sm_service(uint64_t* regs)
         trace_start -= trace_frame_size;
 }
 
+#if 0
 static void filter_sm_calls(uint64_t* regs)
 {
     static int inside = 0;
@@ -979,6 +973,7 @@ static void filter_sm_calls(uint64_t* regs)
     if(!inside)
         trace_start -= trace_frame_size;
 }
+#endif
 
 static char empty_page[4096];
 static int kek1;
@@ -997,19 +992,21 @@ static uint64_t kekv8;
 static void very_kek(uint64_t* regs)
 {
     SKIP_SCHEDULER
-    if(regs[0] == kdata_base - 0x8a5780)
+#if 0
+    if(regs[0] == kdata_base - 0x8a5780) //loadSelfSegment
     {
         uint64_t sp = regs[3];
         kmemcpy((void*)(sp - 0x128), empty_page, 0x128);
         kek1 += 1;
     }
-    if(regs[0] == kdata_base - 0x2cc918)
+#endif
+    if(regs[0] == offsets.loadSelfSegment_watchpoint)
     {
         uint64_t sp = regs[3];
         uint64_t sp_page = sp & -4096;
         uint64_t lr;
         kmemcpy(&lr, (void*)(sp + 0x18), 8);
-        if(lr == kdata_base - 0x8a5727)
+        if(lr == offsets.loadSelfSegment_watchpoint_lr)
         {
             uint64_t backup[20];
             kmemcpy(backup, (void*)sp, 32 /*24*/);
@@ -1022,6 +1019,7 @@ static void very_kek(uint64_t* regs)
             kek2 += 1;
         }
     }
+#if 0
     if(regs[0] == kdata_base - 0x8a5546)
     {
         uint64_t restore[2];
@@ -1030,11 +1028,12 @@ static void very_kek(uint64_t* regs)
         kekv2 = restore[1];
         regs[3] += 16;
     }
-    if(regs[0] == kdata_base - 0x2cc88e)
+#endif
+    if(regs[0] == offsets.decryptSelfBlock_watchpoint)
     {
         uint64_t backup[10];
         kmemcpy(backup, (void*)regs[3], 32);
-        if(backup[3] == kdata_base - 0x8a538a)
+        if(backup[3] == offsets.decryptSelfBlock_watchpoint_lr)
         {
             //backup[5] = backup[3];
             //backup[3] = backup[4] = kdata_base - 0x28a3a0;
@@ -1049,7 +1048,7 @@ static void very_kek(uint64_t* regs)
             kek3 += 1;
         }
     }
-    if(regs[0] == kdata_base - 0x8a52c3)
+    if(regs[0] == offsets.decryptSelfBlock_epilogue)
     {
         uint64_t restore[6];
         kmemcpy(restore, (void*)regs[3], 48);
@@ -1157,8 +1156,10 @@ static void* trace_prog_after_mailbox = 0;
 static void trace_mailbox(uint64_t* regs)
 {
     SKIP_SCHEDULER
+#if 0
     if(regs[0] == kdata_base - 0x8a5410)
         blocks_decrypted++;
+#endif
     if((do_fself & 16))
         fix_mmap_self(regs);
 #if 0
@@ -1180,12 +1181,12 @@ static void trace_mailbox(uint64_t* regs)
         kmemcpy((void*)(mailbox_rdx+8), &size_backup, 4);
     }
 #endif
-    if((do_fself & 1) && regs[0] == kdata_base - 0x8a58c1) //verifyHeader calls sceSblServiceMailbox
+    if((do_fself & 1) && regs[0] == offsets.sceSblServiceMailbox_lr_verifyHeader - 5) //verifyHeader calls sceSblServiceMailbox
     {
         regs[0] += 5;
         regs[3] -= 8;
         kmemcpy((void*)regs[3], regs, 8);
-        regs[0] = kdata_base - 0x6824c0; //sceSblServiceMailbox
+        regs[0] = offsets.sceSblServiceMailbox;
         untrace_fn(regs);
         mailbox_rdx = regs[19];
         kmemcpy(&header_ptr, (void*)(mailbox_rdx+0x38), 8);
@@ -1193,11 +1194,11 @@ static void trace_mailbox(uint64_t* regs)
         kmemcpy((void*)header_ptr, (void*)(kdata_base + 0xdc16e8), 0x6a0);
         kmemcpy((void*)(regs[7] + 16), &(const uint32_t[1]){0x6a0}, 4);
     }
-    else if((do_fself & 1) && regs[0] == kdata_base - 0x8a58bc) //sceSblServiceMailbox returns to verifyHeader
+    else if((do_fself & 1) && regs[0] == offsets.sceSblServiceMailbox_lr_verifyHeader) //sceSblServiceMailbox returns to verifyHeader
     {
         kmemcpy((void*)header_ptr, header_backup, 0x6a0);
     }
-    else if((do_fself & 2) && regs[0] == kdata_base - 0x8a5c40) //sceSblAuthMgrIsLoadable2
+    else if((do_fself & 2) && regs[0] == offsets.sceSblAuthMgrIsLoadable2)
     {
         self_context = regs[12];
         kmemcpy(regs, (void*)regs[3], 8);
@@ -1205,11 +1206,11 @@ static void trace_mailbox(uint64_t* regs)
         regs[5] = 0;
         kmemcpy((void*)regs[13], s_auth_info_for_dynlib, sizeof(s_auth_info_for_dynlib));
     }
-    else if(regs[0] == kdata_base - 0x6824c0) //sceSblServiceMailbox
+    else if(regs[0] == offsets.sceSblServiceMailbox)
     {
         uint64_t lr;
         kmemcpy(&lr, (void*)regs[3], 8);
-        if((do_fself & 4) && lr == kdata_base - 0x8a5541) //from loadSelfSegment
+        if((do_fself & 4) && lr == offsets.sceSblServiceMailbox_lr_loadSelfSegment) //from loadSelfSegment
         {
             regs[3] += 8;
             regs[0] = lr;
@@ -1217,7 +1218,7 @@ static void trace_mailbox(uint64_t* regs)
             kmemcpy((void*)(regs[7]+4), &(const uint32_t[1]){0}, 4);
             return;
         }
-        else if(lr == kdata_base - 0x8a5014) //from decryptSelfBlock
+        else if(lr == offsets.sceSblServiceMailbox_lr_decryptSelfBlock) //from decryptSelfBlock
         {
             uint64_t request[7];
             kmemcpy(request, (void*)regs[7], 56);
@@ -1244,7 +1245,7 @@ static void trace_mailbox(uint64_t* regs)
                 return;
             }
         }
-        else if(lr == kdata_base - 0x8a488c && (do_fself & 64)) //from decryptMultipleSelfBlocks
+        else if(lr == offsets.sceSblServiceMailbox_lr_decryptMultipleSelfBlocks && (do_fself & 64)) //from decryptMultipleSelfBlocks
         {
             uint64_t request[6];
             kmemcpy(request, (void*)regs[7], 48);
@@ -1275,7 +1276,7 @@ static void trace_mailbox(uint64_t* regs)
             kmemcpy((void*)(regs[7]+4), &(const uint32_t[1]){0}, 4);
             return;
         }
-        else if(lr == kdata_base - 0x8a5cbe) //from sceSblAuthMgrSmFinalize
+        else if(lr == offsets.sceSblServiceMailbox_lr_sceSblAuthMgrSmFinalize) //from sceSblAuthMgrSmFinalize
             return;
         else if((do_fself & 32))
         {
@@ -1311,7 +1312,7 @@ static int skh = 0x42424241;
 static void trace_mailbox_for_fpkg(uint64_t* regs)
 {
     SKIP_SCHEDULER
-    if(regs[0] == kdata_base - 0x6824c0) //sceSblServiceMailbox
+    if(regs[0] == offsets.sceSblServiceMailbox)
     {
         uint64_t lr;
         kmemcpy(&lr, (void*)regs[3], 8);
@@ -1332,7 +1333,7 @@ static void trace_mailbox_for_fpkg(uint64_t* regs)
         if(mailbox_n == n_faked_decrypts && trace_prog_after_mailbox)
             trace_prog = trace_prog_after_mailbox;
     }
-    else if(regs[0] == kdata_base - 0x94aaa0) //sceSblPfsSetKeys
+    else if(regs[0] == offsets.sceSblPfsSetKeys) //sceSblPfsSetKeys
     {
         ekh++;
         skh++;
@@ -1351,7 +1352,7 @@ static char* panic_message;
 static void trace_panic(uint64_t* regs)
 {
     SKIP_SCHEDULER
-    if(regs[0] == kdata_base - 0x21020) //panic
+    if(regs[0] == offsets.panic)
     {
         panic_message = (char*)regs[12];
         regs[0] = iret;
@@ -1364,7 +1365,7 @@ static void trace_panic(uint64_t* regs)
 static void trace_cryptasync(uint64_t* regs)
 {
     SKIP_SCHEDULER
-    if(regs[0] == kdata_base - 0x8ed940) //sceSblServiceCryptAsync
+    if(regs[0] == offsets.sceSblServiceCryptAsync)
     {
         uint64_t req = regs[12];
         uint64_t msg;
@@ -1401,12 +1402,15 @@ static void* other_thread_fn(void*)
         asm volatile("");
 }
 
+void set_offsets(void);
+
 void r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
     master_fd = a;
     victim_fd = b;
     victim_pktopts = c;
     kdata_base = d;
+    set_offsets();
     init_pipe();
     if(!victim_pktopts)
     {
