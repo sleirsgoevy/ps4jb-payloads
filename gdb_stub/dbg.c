@@ -245,7 +245,8 @@ extern char _start[];
 #ifndef OBJECT_FILE
 static void reloc_commands()
 {
-    unsigned long long diff = ((unsigned long long)_start) - 0x401000;
+    static unsigned long long start_nonreloc = (unsigned long long)_start;
+    unsigned long long diff = ((unsigned long long)_start) - start_nonreloc;
     for(int i = 0; i < sizeof(commands) / sizeof(commands[0]); i++)
         commands[i] += diff;
 }
@@ -751,6 +752,7 @@ int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern)
             skip_to_end(o);
             start_packet(o);
             unsigned long long base_addr = ((unsigned long long)_start);
+            static unsigned long long start_nonreloc = (unsigned long long)_start;
 #if defined(BLOB) || defined(OBJECT_FILE)
             base_addr &= ~(PAGE_SIZE-1);
             char probe;
@@ -758,7 +760,7 @@ int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern)
                 base_addr -= PAGE_SIZE;
             base_addr += PAGE_SIZE;
 #else
-            base_addr -= 4096;
+            base_addr -= (start_nonreloc - 0x400000);
 #endif
             char buf[24] = "TextSeg=";
             for(int i = 15; i >= 0; i--)

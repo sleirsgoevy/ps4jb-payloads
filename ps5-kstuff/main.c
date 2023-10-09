@@ -642,6 +642,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         } notification = { .f1 = -1, .msg = "ps5-kstuff successfully loaded" };
         ((void(*)())dlsym((void*)0x2001, "sceKernelSendNotificationRequest"))(0, &notification, 0xc30, 0);
     }
+    return 0;
 #endif
     asm volatile("ud2");
     return 0;

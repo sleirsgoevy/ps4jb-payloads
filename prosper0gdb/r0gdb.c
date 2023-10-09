@@ -1408,4 +1408,18 @@ void r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     victim_pktopts = c;
     kdata_base = d;
     init_pipe();
+    if(!victim_pktopts)
+    {
+        uint64_t fd;
+        copyout(&fd, proc+0x48, 8);
+        uint64_t ofiles;
+        copyout(&ofiles, fd, 8);
+        uint64_t victim_file;
+        copyout(&victim_file, ofiles+8+victim_fd*48, 8);
+        uint64_t victim_sock;
+        copyout(&victim_sock, victim_file, 8);
+        uint64_t so_pcb;
+        copyout(&so_pcb, victim_sock+24, 8);
+        copyout(&victim_pktopts, so_pcb+288, 8);
+    }
 }
