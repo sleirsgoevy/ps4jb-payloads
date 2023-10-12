@@ -1,7 +1,7 @@
-all: payload.bin payload-kek.bin gdbstub.bin gdbstub-int.bin gdbstub-obj.o gdbstub-obj-redir.o
+all: payload.bin payload-kek.bin gdbstub.bin gdbstub-int.bin gdbstub-obj.o gdbstub-obj-redir.o gdbstub-obj-nosysc.o
 
 clean:
-	rm -f payload.elf payload.bin payload-kek.elf payload-kek.bin gdbstub.elf gdbstub.bin gdbstub-int.elf gdbstub-int.bin gdbstub-obj.o gdbstub-obj-redir.o r0hooks.o gdbstub-obj-ring0.o
+	rm -f payload.elf payload.bin payload-kek.elf payload-kek.bin gdbstub.elf gdbstub.bin gdbstub-int.elf gdbstub-int.bin gdbstub-obj.o gdbstub-obj-redir.o r0hooks.o gdbstub-obj-ring0.o gdbstub-obj-nosysc.o
 
 ../lib/lib.a:
 	cd ../lib; make
@@ -57,6 +57,9 @@ gdbstub-obj-redir.o: ../lib/lib.a dbg.c ps4libs.c _end.c
 	gcc -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -fPIE -ffreestanding -static ../lib/lib.a -D__PS4__ -Ddbg_enter=main -DOBJECT_FILE -DINTERRUPTER_THREAD -DPS4LIBS -DSTDIO_REDIRECT dbg.c ps4libs.c _end.c -Wl,--entry,_start -Wl,-r -Wl,-gc-sections -o $@
 	objcopy --prefix-symbols=gdbstub_ $@
 	objcopy --redefine-sym gdbstub__start=dbg_enter --redefine-sym gdbstub__GLOBAL_OFFSET_TABLE_=_GLOBAL_OFFSET_TABLE_ $@
+
+gdbstub-obj-nosysc.o: dbg.c
+	gcc -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -fPIE -ffreestanding -static -D__PS4__ -DOBJECT_FILE -DINTERRUPTER_THREAD -DNO_BREAKPOINT_EMULATION dbg.c -Wl,--entry,dbg_enter -Wl,-r -Wl,-gc-sections -o $@
 
 #gdbstub-obj-ring0.o: ../lib/lib.a dbg.c ps4libs.c main.c ring0.c r0hooks.o
 #	gcc -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -fPIE -ffreestanding -mno-red-zone -static ../lib/lib.a -D__PS4__ -Ddbg_enter=main -DOBJECT_FILE -DINTERRUPTER_THREAD -DPS4LIBS dbg.c ps4libs.c ring0.c r0hooks.o -Wl,--entry,_start -Wl,-r -Wl,-gc-sections -o $@
