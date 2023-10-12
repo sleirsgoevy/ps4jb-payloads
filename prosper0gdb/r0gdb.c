@@ -752,7 +752,7 @@ static void filter_dump_authinfo(uint64_t* regs)
     static uint64_t lr;
     static uint64_t r8;
     SKIP_SCHEDULER
-    if(regs[0] == offsets.sceSblAuthMgrIsLoadable2)
+    if(regs[0] == offsets.sceSblAuthMgrSmIsLoadable2)
     {
         kmemcpy(&lr, (void*)regs[3], 8);
         r8 = regs[13];
@@ -963,7 +963,7 @@ static void filter_sm_calls(uint64_t* regs)
         limit = 0;
     }
     if(/*regs[0] == kdata_base - 0x8a5a40 //verifyHeader
-    || regs[0] == kdata_base - 0x8a5c40 //sceSblAuthMgrIsLoadable2
+    || regs[0] == kdata_base - 0x8a5c40 //sceSblAuthMgrSmIsLoadable2
     || regs[0] == kdata_base - 0x8a5780 //loadSelfSegment
     ||*/ regs[0] == kdata_base - 0x8a5410) //decryptSelfBlock
     {
@@ -1171,7 +1171,7 @@ static void trace_mailbox(uint64_t* regs)
         kmemcpy(&size_backup, (void*)(mailbox_rdx+8), 4);
         kmemcpy(&header_ptr, (void*)(mailbox_rdx+0x38), 8);
         kmemcpy(header_backup, (void*)header_ptr, 0x6a0);
-        kmemcpy((void*)header_ptr, (void*)(kdata_base + 0xdc16e8), 0x6a0);
+        kmemcpy((void*)header_ptr, (void*)(offsets.mini_syscore_header), 0x6a0);
         kmemcpy((void*)(mailbox_rdx+8), &(const int[1]){0x6a0}, 4);
     }
     else if((do_fself & 1) && regs[0] == fself_hook_lr) //verifyHeader returned
@@ -1191,14 +1191,14 @@ static void trace_mailbox(uint64_t* regs)
         mailbox_rdx = regs[19];
         kmemcpy(&header_ptr, (void*)(mailbox_rdx+0x38), 8);
         kmemcpy(header_backup, (void*)header_ptr, 0x6a0);
-        kmemcpy((void*)header_ptr, (void*)(kdata_base + 0xdc16e8), 0x6a0);
+        kmemcpy((void*)header_ptr, (void*)(offsets.mini_syscore_header), 0x6a0);
         kmemcpy((void*)(regs[7] + 16), &(const uint32_t[1]){0x6a0}, 4);
     }
     else if((do_fself & 1) && regs[0] == offsets.sceSblServiceMailbox_lr_verifyHeader) //sceSblServiceMailbox returns to verifyHeader
     {
         kmemcpy((void*)header_ptr, header_backup, 0x6a0);
     }
-    else if((do_fself & 2) && regs[0] == offsets.sceSblAuthMgrIsLoadable2)
+    else if((do_fself & 2) && regs[0] == offsets.sceSblAuthMgrSmIsLoadable2)
     {
         self_context = regs[12];
         kmemcpy(regs, (void*)regs[3], 8);
@@ -1253,7 +1253,7 @@ static void trace_mailbox(uint64_t* regs)
             uint64_t dst_ptr_arr = request[2];
             uint32_t count = request[5];
             uint64_t vp[2];
-            kmemcpy(vp, (void*)(kdata_base + 0x3257a98), 16);
+            kmemcpy(vp, (void*)(offsets.kernel_pmap_store+32), 16);
             char* dmem_base = (char*)(vp[0] - vp[1]);
             while(count--)
             {

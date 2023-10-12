@@ -20,7 +20,7 @@ int have_error_code;
 extern char syscall_before[];
 extern char syscall_after[];
 extern struct sysent sysents[];
-extern struct sysent sysents2[];
+extern struct sysent sysents_ps4[];
 extern char doreti_iret[];
 extern char ist4[];
 extern char tss[];
@@ -34,7 +34,7 @@ void handle_syscall(uint64_t* regs, int allow_kekcall)
 #ifdef FREEBSD
 #define IS_PS4(which) 0
 #else
-#define IS_PS4(which) (regs[RAX] == (uint64_t)&sysents2[SYS_##which])
+#define IS_PS4(which) (regs[RAX] == (uint64_t)&sysents_ps4[SYS_##which])
 #endif
 #define IS(which) (IS_PPR(which) || IS_PS4(which))
     if(IS_PPR(getppid) && allow_kekcall)

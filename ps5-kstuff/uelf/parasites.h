@@ -1,57 +1,33 @@
-extern char kdata_base[];
+#include "parasite_desc.h"
+#include "log.h"
+
+//extern char kdata_base[];
+
+extern struct parasite_desc parasites;
+
+static inline int handle_parasites(uint64_t* regs, int a, int b)
+{
+    for(int i = a; i < b; i++)
+        if(parasites.parasites[i].address == regs[RIP])
+        {
+            for(int j = i; j < b && parasites.parasites[j].address == regs[RIP]; j++)
+                regs[parasites.parasites[j].reg] |= -1ull << 48;
+            return 1;
+        }
+    return 0;
+}
 
 static int handle_syscall_parasites(uint64_t* regs)
 {
-#ifndef FREEBSD
-    if(regs[RIP] == (uint64_t)kdata_base - 0x80284d)
-        regs[RDI] |= 0xffffull << 48;
-    else if(regs[RIP] == (uint64_t)kdata_base - 0x3889ac)
-        regs[RSI] |= 0xffffull << 48;
-    else if(regs[RIP] == (uint64_t)kdata_base - 0x38896c)
-        regs[RSI] |= 0xffffull << 48;
-    else
-        return 0;
-    return 1;
-#else
-    return 0;
-#endif
+    return handle_parasites(regs, 0, parasites.lim_syscall);
 }
 
 static int handle_fself_parasites(uint64_t* regs)
 {
-#ifndef FREEBSD
-    if(regs[RIP] == (uint64_t)kdata_base - 0x2cc716
-    || regs[RIP] == (uint64_t)kdata_base - 0x2cd28a
-    || regs[RIP] == (uint64_t)kdata_base - 0x2cd150
-    || regs[RIP] == (uint64_t)kdata_base - 0x2cce73
-    || regs[RIP] == (uint64_t)kdata_base - 0x2ccbfd)
-        regs[RAX] |= 0xffffull << 48;
-    else if(regs[RIP] == (uint64_t)kdata_base - 0x2cc882)
-        regs[RCX] |= 0xffffull << 48;
-    else if(regs[RIP] == (uint64_t)kdata_base - 0x990b10)
-        regs[RDI] |= 0xffffull << 48;
-    else if(regs[RIP] == (uint64_t)kdata_base - 0x2ccd36)
-        regs[R10] |= 0xffffull << 48;
-    else
-        return 0;
-    return 1;
-#else
-    return 0;
-#endif
+    return handle_parasites(regs, parasites.lim_syscall, parasites.lim_fself);
 }
 
 static int handle_unsorted_parasites(uint64_t* regs)
 {
-#ifndef FREEBSD
-    if(regs[RIP] == (uint64_t)kdata_base - 0x479a0e)
-    {
-        regs[RAX] |= 0xffffull << 48;
-        regs[R15] |= 0xffffull << 48;
-    }
-    else
-        return 0;
-    return 1;
-#else
-    return 0;
-#endif
+    return handle_parasites(regs, parasites.lim_fself, parasites.lim_total);
 }

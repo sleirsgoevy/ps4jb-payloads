@@ -6,7 +6,46 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include "../prosper0gdb/r0gdb.h"
+#include "../prosper0gdb/offsets.h"
 #include "../gdb_stub/dbg.h"
+#include "uelf/structs.h"
+#include "uelf/parasite_desc.h"
+
+void* dlsym(void*, const char*);
+
+void notify(const char* s)
+{
+    struct
+    {
+        char pad1[0x10];
+        int f1;
+        char pad2[0x19];
+        char msg[0xc03];
+    } notification = {.f1 = -1};
+    char* d = notification.msg;
+    while(*d++ = *s++);
+    ((void(*)())dlsym((void*)0x2001, "sceKernelSendNotificationRequest"))(0, &notification, 0xc30, 0);
+}
+
+void die(int line)
+{
+    char buf[64] = "problem encountered on main.c line ";
+    char* p = buf;
+    while(*p)
+        p++;
+    int q = 1;
+    while(line / 10 > q)
+        q *= 10;
+    while(q)
+    {
+        *p++ = '0' + (line / q) % 10;
+        q /= 10;
+    }
+    notify(buf);
+    asm volatile("ud2");
+}
+
+#define die() die(__LINE__)
 
 extern uint64_t kdata_base;
 
@@ -50,15 +89,15 @@ static void* kmalloc(size_t sz)
             return (void*)ans;
         }
     }
-    asm volatile("ud2");
+    die();
     return 0;
 }
 
 #define NCPUS 16
-#define IDT (kdata_base+0x64cdc80)
-#define GDT(i) (kdata_base+0x64cee30+0x68*(i))
-#define TSS(i) (kdata_base+0x64d0830+0x68*(i))
-#define PCPU(i) (kdata_base+0x64d2280+0x900*(i))
+#define IDT (offsets.idt)
+#define GDT(i) (offsets.gdt_array+0x68*(i))
+#define TSS(i) (offsets.tss_array+0x68*(i))
+#define PCPU(i) (offsets.pcpu_array+0x900*(i))
 
 size_t virt2file(uint64_t* phdr, uint16_t phnum, uintptr_t addr)
 {
@@ -142,22 +181,22 @@ void* load_kelf(void* ehdr, const char** symbols, uint64_t* values, void** base,
                     else if(symbols[i][0] == '.' && !strcmp(symbols[i]+1, name))
                         value = values[i];
                 if(!value)
-                    asm volatile("ud2");
+                    die();
             }
             if((uint32_t)oia[1] == 6 && oia[2])
-                asm volatile("ud2");
+                die();
             if(oia[0] + 8 > kernel_size)
-                asm volatile("ud2");
+                die();
             kpoke64(kptr+oia[0], oia[2]+value);
         }
         else if((uint32_t)oia[1] == 8)
         {
             if(oia[0] + 8 > kernel_size)
-                asm volatile("ud2");
+                die();
             kpoke64(kptr+oia[0], (uint64_t)(mapped_kptr+oia[2]));
         }
         else
-            asm volatile("ud2");
+            die();
     }
     *entry = kptr + *(uint64_t*)((char*)ehdr + 24);
     return kptr;
@@ -183,7 +222,6 @@ uint64_t kekcall(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uin
 #define KEKCALL_CHECK          0xffffffff00000027
 
 void* p_kekcall;
-void* dlsym(void*, const char*);
 
 void* malloc(size_t sz)
 {
@@ -193,7 +231,7 @@ void* malloc(size_t sz)
 uint64_t get_dmap_base(void)
 {
     uint64_t ptrs[2];
-    copyout(ptrs, kdata_base + 0x3257a98, sizeof(ptrs));
+    copyout(ptrs, offsets.kernel_pmap_store+32, sizeof(ptrs));
     return ptrs[0] - ptrs[1];
 }
 
@@ -238,7 +276,7 @@ void build_uelf_cr3(uint64_t uelf_cr3, void* uelf_base[2], uint64_t uelf_virt_ba
     uint64_t user_start = (uint64_t)uelf_base[0];
     uint64_t user_end = (uint64_t)uelf_base[1];
     if((uelf_virt_base & 0x1fffff) || (dmap_virt_base & ((1ull << 39) - 1)) || user_end - user_start > 0x200000)
-        asm volatile("ud2");
+        die();
     uint64_t pml4_virt = uelf_cr3;
     copyin(pml4_virt, zeros, 4096);
     kmemcpy((void*)(pml4_virt+2048), (void*)(dmap+cr3+2048), 2048);
@@ -364,9 +402,55 @@ static void patch_shellcore(void)
 
 void patch_app_db(void);
 
+static struct PARASITES(13) parasites_403 = {
+    .lim_syscall = 3,
+    .lim_fself = 11,
+    .lim_total = 13,
+    .parasites = {
+        /* syscall parasites */
+        {-0x80284d, RDI},
+        {-0x3889ac, RSI},
+        {-0x38896c, RSI},
+        /* fself parasites */
+        {-0x2cc716, RAX},
+        {-0x2cd28a, RAX},
+        {-0x2cd150, RAX},
+        {-0x2cce73, RAX},
+        {-0x2ccbfd, RAX},
+        {-0x2cc882, RCX},
+        {-0x990b10, RDI},
+        {-0x2ccd36, R10},
+        /* unsorted parasites */
+        {-0x479a0e, RAX},
+        {-0x479a0e, R15},
+    }
+};
+
+static struct parasite_desc* get_parasites(size_t* desc_size)
+{
+    int(*sceKernelGetProsperoSystemSwVersion)(uint32_t*) = dlsym((void*)0x2001, "sceKernelGetProsperoSystemSwVersion");
+    uint32_t buf[10];
+    sceKernelGetProsperoSystemSwVersion(buf);
+    uint32_t ver = buf[9] >> 16;
+    switch(ver)
+    {
+    case 0x403:
+        *desc_size = sizeof(parasites_403);
+        return (void*)&parasites_403;
+    default: return 0;
+    }
+}
+
 int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
     r0gdb_init(ds, a, b, c, d);
+    size_t desc_size = 0;
+    struct parasite_desc* desc = get_parasites(&desc_size);
+    if(!desc)
+    {
+        notify("your firmware is not supported");
+        return 1;
+    }
     uint64_t percpu_ist4[NCPUS];
     for(int cpu = 0; cpu < NCPUS; cpu++)
         copyout(&percpu_ist4[cpu], TSS(cpu)+28+4*8, 8);
@@ -393,137 +477,47 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     uint64_t uelf_virt_base = (find_empty_pml4_index(0) << 39) | (-1ull << 48);
     uint64_t dmem_virt_base = (find_empty_pml4_index(1) << 39) | (-1ull << 48);
     shared_area = virt2phys(shared_area) + dmem_virt_base;
+    uint64_t uelf_parasite_desc = (uint64_t)kmalloc(8192);
+    uelf_parasite_desc = ((uelf_parasite_desc - 1) | 4095) + 1;
+    for(int i = 0; i < desc->lim_total; i++)
+        desc->parasites[i].address += kdata_base;
+    kmemcpy((void*)uelf_parasite_desc, desc, desc_size);
+    uelf_parasite_desc = virt2phys(uelf_parasite_desc) + dmem_virt_base;
     volatile int zero = 0; //hack to force runtime calculation of string pointers
     const char* symbols[] = {
-        "add_rsp_iret"+zero,
-        "copyin"+zero,
-        "copyout"+zero,
-        "crypt_message_resolve"+zero,
-        "decryptMultipleSelfBlocks_epilogue"+zero,
-        "decryptMultipleSelfBlocks_watchpoint_lr"+zero,
-        "decryptSelfBlock_epilogue"+zero,
-        "decryptSelfBlock_watchpoint"+zero,
-        "decryptSelfBlock_watchpoint_lr"+zero,
         "dmem"+zero,
-        "doreti_iret"+zero,
-        "dr2gpr_end"+zero,
-        "dr2gpr_start"+zero,
-        "gpr2dr_1_end"+zero,
-        "gpr2dr_1_start"+zero,
-        "gpr2dr_2_end"+zero,
-        "gpr2dr_2_start"+zero,
+        "parasites"+zero,
         "int1_handler"+zero,
         "int13_handler"+zero,
         ".ist_errc"+zero,
         ".ist_noerrc"+zero,
         ".ist4"+zero,
-        "justreturn"+zero,
-        "justreturn_pop"+zero,
-        "kdata_base"+zero,
-        "loadSelfSegment_epilogue"+zero,
-        "loadSelfSegment_watchpoint"+zero,
-        "loadSelfSegment_watchpoint_lr"+zero,
-        "mdbg_call_fix"+zero,
-        "mini_syscore_header"+zero,
-        "mov_cr3_rax"+zero,
-        "mov_rdi_cr3"+zero,
-        "mprotect_fix_start"+zero,
-        "mprotect_fix_end"+zero,
-        "nop_ret"+zero,
         ".pcpu"+zero,
-        "pop_all_except_rdi_iret"+zero,
-        "pop_all_iret"+zero,
-        "push_pop_all_iret"+zero,
-        "rdmsr_end"+zero,
-        "rdmsr_start"+zero,
-        "rep_movsb_pop_rbp_ret"+zero,
-        "sceSblServiceCryptAsync_deref_singleton"+zero,
-        "sceSblServiceIsLoadable2"+zero,
-        "sceSblServiceMailbox"+zero,
-        "sceSblServiceMailbox_lr_decryptMultipleSelfBlocks"+zero,
-        "sceSblServiceMailbox_lr_decryptSelfBlock"+zero,
-        "sceSblServiceMailbox_lr_loadSelfSegment"+zero,
-        "sceSblServiceMailbox_lr_sceSblPfsClearKey_1"+zero,
-        "sceSblServiceMailbox_lr_sceSblPfsClearKey_2"+zero,
-        "sceSblServiceMailbox_lr_verifyHeader"+zero,
-        "sceSblServiceMailbox_lr_verifySuperBlock"+zero,
         "shared_area"+zero,
-        "soo_ioctl"+zero,
-        "syscall_after"+zero,
-        "syscall_before"+zero,
-        "sysents"+zero,
-        "sysents2"+zero,
-        "swapgs_add_rsp_iret"+zero,
         ".tss"+zero,
         ".uelf_cr3"+zero,
         ".uelf_entry"+zero,
-        "wrmsr_ret"+zero,
+#define OFFSET(x) (#x)+zero,
+#include "../prosper0gdb/offset_list.txt"
+#undef OFFSET
         0,
     };
     uint64_t values[] = {
-        kdata_base - 0x9cf853, // add_rsp_iret
-        kdata_base - 0x9908e0, // copyin
-        kdata_base - 0x990990, // copyout
-        kdata_base - 0x479d60, // crypt_message_resolve
-        kdata_base - 0x8a47d2, // decryptMultipleSelfBlocks_epilogue
-        kdata_base - 0x8a4c55, // decryptMultipleSelfBlocks_watchpoint_lr
-        kdata_base - 0x8a52c3, // decryptSelfBlock_epilogue
-        kdata_base - 0x2cc88e, // decryptSelfBlock_watchpoint
-        kdata_base - 0x8a538a, // decryptSelfBlock_watchpoint_lr
         dmem_virt_base,        // dmem
-        kdata_base - 0x9cf84c, // doreti_iret
-        kdata_base - 0x9d6d7c, // dr2gpr_end
-        kdata_base - 0x9d6d93, // dr2gpr_start
-        kdata_base - 0x9d6c55, // gpr2dr_1_end
-        kdata_base - 0x9d6c7a, // gpr2dr_1_start
-        kdata_base - 0x9d6de9, // gpr2dr_2_end
-        kdata_base - 0x9d6b87, // gpr2dr_2_start
+        uelf_parasite_desc,    // parasites
         int1_handler,          // int1_handler
         int13_handler,         // int13_handler
         0x1237,                // .ist_errc
         0x1238,                // .ist_noerrc
         0x1239,                // .ist4
-        kdata_base - 0x9cf990, // justreturn
-        kdata_base - 0x9cf988, // justreturn_pop
-        kdata_base,            // kdata_base
-        kdata_base - 0x8a54cd, // loadSelfSegment_epilogue
-        kdata_base - 0x2cc918, // loadSelfSegment_watchpoint
-        kdata_base - 0x8a5727, // loadSelfSegment_watchpoint_lr
-        kdata_base - 0x631ea9, // mdbg_call_fix
-        kdata_base + 0xdc16e8, // mini_syscore_header
-        kdata_base - 0x396f9e, // mov_cr3_rax
-        kdata_base - 0x39700e, // mov_rdi_cr3
-        kdata_base - 0x90ac61, // mprotect_fix_start
-        kdata_base - 0x90ac5b, // mprotect_fix_end
-        kdata_base - 0x28a3a0, // nop_ret
         0x1234,                // .pcpu
-        kdata_base - 0x9cf8a7, // pop_all_except_rdi_iret
-        kdata_base - 0x9cf8ab, // pop_all_iret
-        kdata_base - 0x96be70, // push_pop_all_iret
-        kdata_base - 0x9d6cf9, // rdmsr_end
-        kdata_base - 0x9d6d02, // rdmsr_start
-        kdata_base - 0x990a55, // rep_movsb_pop_rbp_ret
-        kdata_base - 0x8ed902, // sceSblServiceCryptAsync_deref_singleton
-        kdata_base - 0x8a5c40, // sceSblServiceIsLoadable2
-        kdata_base - 0x6824c0, // sceSblServiceMailbox
-        kdata_base - 0x8a488c, // sceSblServiceMailbox_lr_decryptMultipleSelfBlocks
-        kdata_base - 0x8a5014, // sceSblServiceMailbox_lr_decryptSelfBlock
-        kdata_base - 0x8a5541, // sceSblServiceMailbox_lr_loadSelfSegment
-        kdata_base - 0x94ada4, // sceSblServiceMailbox_lr_sceSblPfsClearKey_1
-        kdata_base - 0x94ad2e, // sceSblServiceMailbox_lr_sceSblPfsClearKey_2
-        kdata_base - 0x8a58bc, // sceSblServiceMailbox_lr_verifyHeader
-        kdata_base - 0x94a7f0, // sceSblServiceMailbox_lr_verifySuperBlock
         shared_area, // shared_area
-        kdata_base - 0x96eb98, // soo_ioctl
-        kdata_base - 0x8022ee, // syscall_after
-        kdata_base - 0x802311, // syscall_before
-        kdata_base + 0x1709c0, // sysents
-        kdata_base + 0x168410, // sysents2
-        kdata_base - 0x9cf856, // swapgs_add_rsp_iret, XXX
         0x123a,                // .tss
         0x1235,                // .uelf_cr3
         0x1236,                // .uelf_entry
-        kdata_base - 0x9d20cc, // wrmsr_ret
+#define OFFSET(x) offsets.x,
+#include "../prosper0gdb/offset_list.txt"
+#undef OFFSET
         0,
     };
     size_t pcpu_idx, uelf_cr3_idx, uelf_entry_idx, ist_errc_idx, ist_noerrc_idx, ist4_idx, tss_idx;
@@ -595,28 +589,28 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         kmemcpy((char*)TSS(cpu)+28+3*8, (char*)entry+8, 8);
         kmemcpy((char*)TSS(cpu)+28+7*8, (char*)entry+24, 8);
     }
-    uint64_t iret = kdata_base - 0x9cf84c;
+    uint64_t iret = offsets.doreti_iret;
     kmemcpy((char*)(IDT+16*2), (char*)&iret, 2);
     kmemcpy((char*)(IDT+16*2+6), (char*)&iret+2, 6);
     //kmemzero((char*)(IDT+16*1), 16);
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\napplying kdata patches... ", (uintptr_t)31);
-    copyin(kdata_base + 0xd11bb8 + 14, &(const uint16_t[1]){0xdeb7}, 2); //native sysentvec
-    copyin(kdata_base + 0xd11d30 + 14, &(const uint16_t[1]){0xdeb7}, 2); //ps4 sysentvec
-    copyin(kdata_base + 0x2e31830 + 11*8 + 2*8 + 6, &(const uint16_t[1]){0xdeb7}, 2); //crypt xts
-    copyin(kdata_base + 0x2e31830 + 11*8 + 9*8 + 6, &(const uint16_t[1]){0xdeb7}, 2); //crypt hmac
+    copyin(offsets.sysentvec + 14, &(const uint16_t[1]){0xdeb7}, 2); //native sysentvec
+    copyin(offsets.sysentvec_ps4 + 14, &(const uint16_t[1]){0xdeb7}, 2); //ps4 sysentvec
+    copyin(offsets.crypt_singleton_array + 11*8 + 2*8 + 6, &(const uint16_t[1]){0xdeb7}, 2); //crypt xts
+    copyin(offsets.crypt_singleton_array + 11*8 + 9*8 + 6, &(const uint16_t[1]){0xdeb7}, 2); //crypt hmac
     {
         //enable debug settings & spoof target
         uint32_t q = 0;
-        copyout(&q, kdata_base + 0x6506474, 4); //securityflags
+        copyout(&q, offsets.security_flags, 4);
         q |= 0x14;
-        copyin(kdata_base + 0x6506474, &q, 4);
-        copyin(kdata_base + 0x650647d, "\x82", 1); //targetid
-        copyout(&q, kdata_base + 0x6506498, 4); //qa_flags
+        copyin(offsets.security_flags, &q, 4);
+        copyin(offsets.targetid, "\x82", 1);
+        copyout(&q, offsets.qa_flags, 4);
         q |= 0x1030300;
-        copyin(kdata_base + 0x6506498, &q, 4);
-        copyout(&q, kdata_base + 0x6506500, 4); //utoken
+        copyin(offsets.qa_flags, &q, 4);
+        copyout(&q, offsets.utoken, 4);
         q |= 1;
-        copyin(kdata_base + 0x6506500, &q, 4);
+        copyin(offsets.utoken, &q, 4);
     }
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\npatching shellcore... ", (uintptr_t)27);
     p_kekcall = (char*)dlsym((void*)0x2001, "getpid") + 7;
@@ -632,16 +626,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     patch_app_db();
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
 #ifndef DEBUG
-    {
-        struct
-        {
-            char pad1[0x10];
-            int f1;
-            char pad2[0x19];
-            char msg[0xc03];
-        } notification = { .f1 = -1, .msg = "ps5-kstuff successfully loaded" };
-        ((void(*)())dlsym((void*)0x2001, "sceKernelSendNotificationRequest"))(0, &notification, 0xc30, 0);
-    }
+    notify("ps5-kstuff successfully loaded");
     return 0;
 #endif
     asm volatile("ud2");

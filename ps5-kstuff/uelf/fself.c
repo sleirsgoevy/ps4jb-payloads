@@ -60,8 +60,8 @@ static int is_header_fself(uint64_t header, uint32_t size, uint16_t* e_type, int
 }
 
 extern char doreti_iret[];
+extern char sceSblAuthMgrSmIsLoadable2[];
 extern char sceSblServiceMailbox[];
-extern char sceSblServiceIsLoadable2[];
 extern char sceSblServiceMailbox_lr_verifyHeader[];
 extern char sceSblServiceMailbox_lr_loadSelfSegment[];
 extern char sceSblServiceMailbox_lr_decryptSelfBlock[];
@@ -94,7 +94,7 @@ static void unset_dbgregs_for_watchpoint(uint64_t* regs)
 }
 
 static uint64_t dbgregs_for_fself[6] = {
-    (uint64_t)sceSblServiceMailbox, (uint64_t)sceSblServiceIsLoadable2, 0, 0,
+    (uint64_t)sceSblServiceMailbox, (uint64_t)sceSblAuthMgrSmIsLoadable2, 0, 0,
     0, 0x405,
 };
 
@@ -200,7 +200,7 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
 
 int try_handle_fself_trap(uint64_t* regs)
 {
-    if(regs[RIP] == (uint64_t)sceSblServiceIsLoadable2)
+    if(regs[RIP] == (uint64_t)sceSblAuthMgrSmIsLoadable2)
     {
         uint64_t ctx[8];
         copy_from_kernel(ctx, regs[RDI], sizeof(ctx));
