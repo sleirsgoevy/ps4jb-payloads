@@ -1259,7 +1259,8 @@ void real_dbg_enter(uint64_t* rsp)
     int reuse = 1;
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, 4);
     int brv = 1;
-    for(int port = 1234; port < 65536 && brv; port++)
+    int port;
+    for(port = 1234; port < 65536 && brv; port++)
     {
         struct sockaddr_in sa = {
             .sin_family = AF_INET,
@@ -1278,6 +1279,16 @@ void real_dbg_enter(uint64_t* rsp)
     }
     if(brv)
         return;
+    #ifdef __PS4__
+    {
+        void* dlsym(void*, const char*);
+        void notify(const char* s);
+        char msg[40];
+        ((int (*)(char* __restrict, const char* __restrict, ...))dlsym(
+            (void*)0x2, "sprintf"))(msg, "GDB is listening on port %d\n", port - 1);
+        notify(msg);
+    }
+    #endif
     listen(sock, 1);
     gdb_socket = accept(sock, NULL, NULL);
     int nodelay = 1;

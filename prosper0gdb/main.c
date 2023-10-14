@@ -11,6 +11,22 @@
 #include <sys/uio.h>
 #include <sys/mount.h>
 
+void* dlsym(void*, const char*);
+
+void notify(const char* s)
+{
+    struct
+    {
+        char pad1[0x10];
+        int f1;
+        char pad2[0x19];
+        char msg[0xc03];
+    } notification = {.f1 = -1};
+    char* d = notification.msg;
+    while(*d++ = *s++);
+    ((void(*)())dlsym((void*)0x2001, "sceKernelSendNotificationRequest"))(0, &notification, 0xc30, 0);
+}
+
 static void infsleep(int sig)
 {
     struct timespec ts = {1000, 0};
