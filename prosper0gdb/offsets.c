@@ -91,7 +91,7 @@ END_FW()
 
 void* dlsym(void*, const char*);
 
-void set_offsets(void)
+int set_offsets(void)
 {
     int(*sceKernelGetProsperoSystemSwVersion)(uint32_t*) = dlsym((void*)0x2001, "sceKernelGetProsperoSystemSwVersion");
     uint32_t buf[10];
@@ -99,6 +99,10 @@ void set_offsets(void)
     uint32_t ver = buf[9] >> 16;
     switch(ver)
     {
+#ifndef NO_BUILTIN_OFFSETS
     case 0x403: set_offsets_403(); break;
+#endif
+    default: return -1;
     }
+    return 0;
 }

@@ -14,7 +14,7 @@ ssize_t copyin(uint64_t dst, const void* src, size_t count);
 /* init */
 
 //call before everything
-void r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d);
+int r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d);
 
 //set up for interactive gdb
 void r0gdb_setup(int do_swapgs);

@@ -1402,15 +1402,10 @@ static void* other_thread_fn(void*)
         asm volatile("");
 }
 
-void set_offsets(void);
+int set_offsets(void);
 
-void r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d)
+static void r0gdb_init_with_offsets(void)
 {
-    master_fd = a;
-    victim_fd = b;
-    victim_pktopts = c;
-    kdata_base = d;
-    set_offsets();
     init_pipe();
     if(!victim_pktopts)
     {
@@ -1426,4 +1421,18 @@ void r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         copyout(&so_pcb, victim_sock+24, 8);
         copyout(&victim_pktopts, so_pcb+288, 8);
     }
+}
+
+int r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d)
+{
+    master_fd = a;
+    victim_fd = b;
+    victim_pktopts = c;
+    kdata_base = d;
+    if(!set_offsets())
+    {
+        r0gdb_init_with_offsets();
+        return 0;
+    }
+    return -1;
 }

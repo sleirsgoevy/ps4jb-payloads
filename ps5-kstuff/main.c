@@ -443,12 +443,16 @@ static struct parasite_desc* get_parasites(size_t* desc_size)
 
 int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
-    r0gdb_init(ds, a, b, c, d);
+    if(r0gdb_init(ds, a, b, c, d))
+    {
+        notify("your firmware is not supported (prosper0gdb");
+        return 1;
+    }
     size_t desc_size = 0;
     struct parasite_desc* desc = get_parasites(&desc_size);
     if(!desc)
     {
-        notify("your firmware is not supported");
+        notify("your firmware is not supported (ps5-kstuff)");
         return 1;
     }
     uint64_t percpu_ist4[NCPUS];
