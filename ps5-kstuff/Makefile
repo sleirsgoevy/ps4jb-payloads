@@ -13,10 +13,10 @@ structs.inc: structs-ps5.inc
 	cp structs-ps5.inc structs.inc
 
 payload.elf: ../lib/lib-elf.a ../prosper0gdb/prosper0gdb.o main.c sqlite_triggers.c kelf uelf/uelf.bin
-	gcc -O0 -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -static ../lib/lib-elf.a ../prosper0gdb/prosper0gdb.o $(EXTRA_CFLAGS) main.c ../prosper0gdb/dbg.c sqlite_triggers.c -Wl,-gc-sections -o payload.elf -fPIE -ffreestanding -no-pie -Wl,-z,max-page-size=16384
+	gcc -O0 -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -static ../lib/lib-elf.a ../prosper0gdb/prosper0gdb.o $(EXTRA_CFLAGS) main.c ../prosper0gdb/dbg.c sqlite_triggers.c -Wl,-gc-sections -o payload.elf -fPIE -ffreestanding -no-pie -Wl,-z,max-page-size=16384 -Wl,-zcommon-page-size=16384
 
 payload-gdb.elf: ../lib/lib-elf.a ../prosper0gdb/prosper0gdb.o main.c sqlite_triggers.c utils.c kelf uelf/uelf
-	gcc -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -static ../lib/lib-elf.a ../prosper0gdb/prosper0gdb.o $(EXTRA_CFLAGS) -DDEBUG main.c ../prosper0gdb/dbg.c sqlite_triggers.c utils.c -o payload-gdb.elf -fPIE -ffreestanding -no-pie -Wl,-z,max-page-size=16384
+	gcc -O0 -g -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -static ../lib/lib-elf.a ../prosper0gdb/prosper0gdb.o $(EXTRA_CFLAGS) -DDEBUG main.c ../prosper0gdb/dbg.c sqlite_triggers.c utils.c -o payload-gdb.elf -fPIE -ffreestanding -no-pie -Wl,-z,max-page-size=16384 -Wl,-zcommon-page-size=16384
 
 payloa%.bin: payloa%.elf
 	objcopy $< --only-section .text --only-section .data --only-section .bss --only-section .rodata -O binary $@

