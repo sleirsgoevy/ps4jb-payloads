@@ -5,7 +5,7 @@ Instructions for ps5-kstuff porting_tool (original by NotSoTypicalGamer and Echo
 2. Clone this repository locally:
    1. `git clone https://github.com/sleirsgoevy/ps4jb-payloads.git --recursive --recurse-submodules -b bd-jb`
    2. move into the right folder `cd ps4jb-payloads/ps5-kstuff/porting_tool`
-3. Create `symbols.json` in thesame folder and the contents should be: `{"allproc": <ALLPROC_OFFSET>}`  
+3. Create `symbols.json` in the same folder and the contents should be: `{"allproc": <ALLPROC_OFFSET>}`  
    1. to find the `ALLPROC_OFFSET` for your firmware, search on [Specter's GitHub](https://github.com/Cryptogenic/PS5-IPV6-Kernel-Exploit)
    2. the offsets are located here `document/en/ps5/offsets`, find the right `.js` file for your firmware and search for `OFFSET_KERNEL_DATA_BASE_ALLPROC`. The HEX value you will find needs to be converted to DEC (just use a website online)
    3. you can finally substitute `<ALLPROC_OFFSET>` with the DEC value you got and save the file
@@ -16,4 +16,4 @@ Instructions for ps5-kstuff porting_tool (original by NotSoTypicalGamer and Echo
 8. Once complete you should have `kernel-data.bin` dumped into porting_tool folder.
 9. `symbols.json` will have also been updated to include needed information.
 
-NOTE: This tool isn't complete. This doesn't grab all the data necessary to port "ps5-kstuff" to other firmwares. It's a WIP.
+**NOTE: This tool isn't complete. This doesn't grab all the data necessary to port "ps5-kstuff" to other firmwares. It's a WIP.**
