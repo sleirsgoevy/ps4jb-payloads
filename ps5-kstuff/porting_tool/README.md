@@ -1,7 +1,7 @@
 Instructions for ps5-kstuff porting_tool
 
 0. Make sure PS5 is jailbroken and elf loader is running...
-1. Use Linux.. real Linux?
+1. Use Linux (WSL doesnt appear to work)
 2. Create Symbols.json and first line should be... `{"allproc": #####}`  ...where ### is your firmwares ALLPROC offset converted from hex to dec. Specters exploit GitHub has these numbers at PS5-IPV6-Kernel-Exploit/document/en/ps5/offsets/x.xx.js just scroll to bottom and you'll see your hex ALLPROC offset, convert it and replace ### with that. 
 3. clone sleirsgovey repo
 `git clone https://github.com/sleirsgoevy/ps4jb-payloads.git --recursive --recurse-submodules`
