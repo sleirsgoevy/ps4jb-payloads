@@ -32,6 +32,8 @@ if 'allproc' not in symbols:
 
 R0GDB_FLAGS = ['-DMEMRW_FALLBACK', '-DNO_BUILTIN_OFFSETS']
 
+r0gdb = gdb_rpc.R0GDB(gdb, R0GDB_FLAGS)
+
 def ostr(x):
     return str(x % 2**64)
 
@@ -68,7 +70,7 @@ def dump_kernel():
     sys.stdout.flush()
     kdata_base = gdb.ieval('kdata_base')
     gdb.eval('offsets.allproc = '+ostr(kdata_base + symbols['allproc']))
-    gdb.eval('r0gdb_init_with_offsets()')
+    if not gdb.ieval('rpipe'): gdb.eval('r0gdb_init_with_offsets()')
     sock, addr = gdb.bind_socket()
     with sock:
         remote_fd = gdb.ieval('r0gdb_open_socket("%s", %d)'%addr)
@@ -256,7 +258,7 @@ def doreti_iret():
     gdb.use_r0gdb(R0GDB_FLAGS)
     kdata_base = gdb.ieval('kdata_base')
     gdb.eval('offsets.allproc = '+ostr(kdata_base + symbols['allproc']))
-    gdb.eval('r0gdb_init_with_offsets()')
+    if not gdb.ieval('rpipe'): gdb.eval('r0gdb_init_with_offsets()')
     idt = kdata_base + symbols['idt']
     tss_array = kdata_base + symbols['tss_array']
     #buf = gdb.ieval('{void*}%d'%(tss_array+0x1c+4*8))
@@ -290,14 +292,136 @@ def doreti_iret():
     pc |= (2**64 - 2**32)
     return pc - kdata_base
 
+def do_use_r0gdb_raw():
+    kdata_base = gdb.ieval('kdata_base')
+    gdb.eval('offsets.allproc = '+ostr(kdata_base + symbols['allproc']))
+    if not gdb.ieval('rpipe'): gdb.eval('r0gdb_init_with_offsets()')
+    gdb.eval('offsets.doreti_iret = '+ostr(kdata_base + symbols['doreti_iret']))
+    gdb.eval('offsets.add_rsp_iret = offsets.doreti_iret - 7')
+    gdb.eval('offsets.swapgs_add_rsp_iret = offsets.add_rsp_iret - 3')
+    gdb.eval('offsets.idt = '+ostr(kdata_base + symbols['idt']))
+    gdb.eval('offsets.tss_array = '+ostr(kdata_base + symbols['tss_array']))
+
+use_r0gdb_raw = r0gdb.use_raw_fn(do_use_r0gdb_raw)
+
+@derive_symbols('push_pop_all_iret', 'rdmsr_start', 'pop_all_iret', 'justreturn')
+@retry_on_error
+def justreturn():
+    use_r0gdb_raw()
+    kdata_base = gdb.ieval('kdata_base')
+    idt = kdata_base + symbols['idt']
+    int244 = (gdb.ieval('{void*}%d'%(idt+244*16+6), 5) % 2**48) * 2**16 + gdb.ieval('{unsigned short}%d'%(idt+244*16), 5)
+    print('single-stepping...')
+    def step():
+        gdb.execute('stepi', 15)
+        print(hex(gdb.ieval('$pc')), hex(gdb.ieval('$rsp')))
+    gdb.ieval('$pc = %d'%int244)
+    step()
+    step()
+    # step until rdmsr
+    rsp0 = gdb.ieval('$rsp')
+    rax = gdb.ieval('$rax')
+    rdx = gdb.ieval('$rdx')
+    pc = gdb.ieval('$pc')
+    while True:
+        step()
+        assert gdb.ieval('$rsp') == rsp0
+        if gdb.ieval('$rax') != rax and gdb.ieval('$rdx') != rdx:
+            break
+        pc = gdb.ieval('$pc')
+    rdmsr = pc
+    assert gdb.ieval('$pc') == rdmsr + 2
+    # step until the function call & through it
+    while gdb.ieval('$rsp') == rsp0: step()
+    while gdb.ieval('$rsp') != rsp0: step()
+    pc = gdb.ieval('$pc')
+    step()
+    # check that we actually jumped (somewhere...)
+    assert (gdb.ieval('$pc') - pc) % 2**64 >= 16
+    justreturn = gdb.ieval('$pc') - 16
+    gdb.ieval('{void*}$rsp = 0x1337133713371337')
+    # step until ld_regs
+    while gdb.ieval('$rdi') != 0x1337133713371337:
+        pc = gdb.ieval('$pc')
+        step()
+    pop_all_iret = pc
+    # sanity check on justreturn
+    rsp0 = gdb.ieval('$rsp')
+    gdb.ieval('$pc = %d'%justreturn)
+    gdb.ieval('$rax = 0x4141414142424242')
+    step()
+    assert gdb.ieval('$rsp') == rsp0 - 8 and gdb.ieval('{void*}$rsp') == 0x4141414142424242
+    return int244-kdata_base, rdmsr-kdata_base, pop_all_iret-kdata_base, justreturn-kdata_base
+
+@derive_symbol
+@retry_on_error
+def wrmsr_ret():
+    use_r0gdb_raw()
+    kdata_base = gdb.ieval('kdata_base')
+    gdb.ieval('$pc = %d'%(kdata_base+symbols['justreturn']))
+    print('single-stepping...')
+    while gdb.ieval('($eflags = 0x102, $rcx)') != 0x80b:
+        gdb.execute('stepi')
+        print(hex(gdb.ieval('$pc')), hex(gdb.ieval('$rsp')))
+    gdb.execute('stepi')
+    gdb.execute('stepi')
+    wrmsr = gdb.ieval('$pc')
+    try: gdb.execute('stepi')
+    except gdb_rpc.DisconnectedException: pass
+    else: assert False
+    return wrmsr-kdata_base
+
+def do_use_r0gdb_trace():
+    do_use_r0gdb_raw()
+    kdata_base = gdb.ieval('kdata_base')
+    gdb.ieval('offsets.rdmsr_start = %d'%(kdata_base+symbols['rdmsr_start']))
+    gdb.ieval('offsets.wrmsr_ret = %d'%(kdata_base+symbols['wrmsr_ret']))
+    if 'rep_movsb_pop_rbp_ret' in symbols:
+        gdb.ieval('offsets.rep_movsb_pop_rbp_ret = %d'%(kdata_base+symbols['rep_movsb_pop_rbp_ret']))
+
+use_r0gdb_trace = r0gdb.use_trace_fn(do_use_r0gdb_trace)
+
+@derive_symbol
+@retry_on_error
+def rep_movsb_pop_rbp_ret():
+    use_r0gdb_trace(0)
+    kdata_base = gdb.ieval('kdata_base')
+    pc0 = gdb.ieval('$pc = (void*)dlsym(0x2001, "getpid")')
+    ptr = gdb.ieval('ptr_to_leaked_rep_movsq = kmalloc(8)')
+    gdb.ieval('trace_prog = leak_rep_movsq')
+    gdb.execute('stepi')
+    assert gdb.ieval('$pc') == pc0 + 12
+    rep_movsq = gdb.ieval('{void*}%d'%ptr)
+    r0gdb.trace_to_raw()
+    # trace from rep movsq to nearby rep movsb
+    rdi = rsi = gdb.ieval('($pc = %d, $rdi = $rsi = $rsp)'%rep_movsq) % 2**64
+    while True:
+        pc = gdb.ieval('($rcx = 1, $pc)')
+        print(hex(pc), hex(rdi), hex(rsi))
+        gdb.execute('stepi')
+        rdi1 = gdb.ieval('$rdi') % 2**64
+        rsi1 = gdb.ieval('$rsi') % 2**64
+        if rdi1 == rdi + 1 and rsi1 == rsi + 1 and gdb.ieval('$rcx') == 0:
+            break
+        rdi = rdi1
+        rsi = rsi1
+    rep_movsb = pc
+    # check epilogue
+    gdb.ieval('{void*}$rsp = 0x1234')
+    gdb.ieval('{void*}($rsp+8) = 0x5678')
+    gdb.execute('stepi')
+    gdb.execute('stepi')
+    assert gdb.ieval('$rbp == 0x1234 && $rip == 0x5678')
+    return rep_movsb - kdata_base
+
 print(len(symbols), 'offsets currently known')
-print(sum(i.__name__ not in symbols for i in derivations), 'offsets to be found')
+print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')
 
 for i in derivations:
     if isinstance(i, tuple):
         i, names = i
-        print('Probing offsets `%s`'%'`, `'.join(names))
         if any(j not in symbols for j in names):
+            print('Probing offsets `%s`'%'`, `'.join(names))
             try: value = i()
             except Exception:
                 raise Exception("failed to derive `%s`, see above why"%'`, `'.join(names))

@@ -1,4 +1,4 @@
-import subprocess, os, threading, socket, sys, signal, time
+import subprocess, os, threading, socket, sys, signal, time, functools
 
 token = os.urandom(16).hex()
 
@@ -175,35 +175,36 @@ class GDB:
         self.stdio = None
 
 class R0GDB:
-    def __init__(self, gdb, cflags=[], setup_cmd=''):
+    def __init__(self, gdb, cflags=[]):
         self.gdb = gdb
         self.cflags = cflags
         self.trace_size = -1
-        self.setup_cmd = setup_cmd
-        self.setup_cmd_run = False
-    def use_raw(self):
-        if self.trace_size not in (-1, -2):
-            self.gdb.kill()
-        if self.gdb.use_r0gdb(self.cflags):
-            self.setup_cmd_run = False
-            self.trace_size = -1
-        if not self.setup_cmd_run:
-            self.execute(self.setup_cmd)
-            self.setup_cmd_run = True
-        if self.trace_size == -1:
-            self.execute('p r0gdb()')
-            self.trace_size = -2
-    def use_trace(self, trace_size):
-        if self.trace_size < -1:
-            self.gdb.kill()
-        if self.gdb.use_r0gdb(self.cflags):
-            self.setup_cmd_run = False
-            self.trace_size = -1
-        if not self.setup_cmd_run:
-            self.execute(self.setup_cmd)
-            self.setup_cmd_run = True
-        if trace_size > self.trace_size:
-            if ' = void\n' not in self.execute('p r0gdb_trace('+str(trace_size)+')'):
+    def trace_to_raw(self):
+        self.gdb.execute('p r0gdb()')
+        self.trace_size = -2
+    def use_raw_fn(self, fn):
+        @functools.wraps(fn)
+        def wrapper():
+            if self.trace_size not in (-1, -2):
                 self.gdb.kill()
-                raise DisconnectedException("r0gdb_trace failed")
-            self.trace_size = trace_size
+            if self.gdb.use_r0gdb(self.cflags):
+                self.trace_size = -1
+                fn()
+            if self.trace_size == -1:
+                self.gdb.execute('p r0gdb()')
+                self.trace_size = -2
+        return wrapper
+    def use_trace_fn(self, fn):
+        @functools.wraps(fn)
+        def wrapper(trace_size):
+            if self.trace_size < -1:
+                self.gdb.kill()
+            if self.gdb.use_r0gdb(self.cflags):
+                self.trace_size = -1
+                fn()
+            if trace_size > self.trace_size:
+                if ' = void\n' not in self.gdb.execute('p r0gdb_trace('+str(trace_size)+')'):
+                    self.gdb.kill()
+                    raise DisconnectedException("r0gdb_trace failed")
+                self.trace_size = trace_size
+        return wrapper
