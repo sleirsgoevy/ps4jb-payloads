@@ -112,6 +112,22 @@ void memfd_close(struct memfd* fd)
     fd->capacity = 0;
 }
 
+void* dlsym(void*, const char*);
+
+void notify(const char* s)
+{
+    struct
+    {
+        char pad1[0x10];
+        int f1;
+        char pad2[0x19];
+        char msg[0xc03];
+    } notification = {.f1 = -1};
+    char* d = notification.msg;
+    while(*d++ = *s++);
+    ((void(*)())dlsym((void*)0x2001, "sceKernelSendNotificationRequest"))(0, &notification, 0xc30, 0);
+}
+
 static void print_string(const char* s)
 {
 #ifdef DEBUG
@@ -506,16 +522,16 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     || listen(sock, 1))
     {
         close(sock);
-        return 1;
+        return 2;
     }
-    print_string("waiting for connection\n");
+    notify("waiting for connection\n");
     int sock2 = accept(sock, 0, 0);
     if(sock2 < 0)
     {
         close(sock);
-        return 1;
+        return 3;
     }
-    print_string("connected\n");
+    notify("connected\n");
     const char* paths_pfsmnt[] = {
         "/mnt/sandbox/pfsmnt",
         0
@@ -537,7 +553,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         buf = tree(paths);
     }
     dump_dirents((void*)buf.buf, sock2);
-    print_string("all done\n");
+    notify("all done\n");
     close(sock2);
     kill(getpid(), SIGKILL);
     return 0;
