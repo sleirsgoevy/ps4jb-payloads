@@ -1,20 +1,43 @@
-Instructions for ps5-kstuff porting_tool
+# Instructions for porting_tool
 
-0. Make sure PS5 is jailbroken and elf loader is running...
-1. Use Linux (WSL doesnt appear to work)
-2. Create Symbols.json and first line should be... `{"allproc": #####}`  ...where ### is your firmwares ALLPROC offset converted from hex to dec. Specters exploit GitHub has these numbers at PS5-IPV6-Kernel-Exploit/document/en/ps5/offsets/x.xx.js just scroll to bottom and you'll see your hex ALLPROC offset, convert it and replace ### with that. 
-3. clone sleirsgovey repo
-`git clone https://github.com/sleirsgoevy/ps4jb-payloads.git --recursive --recurse-submodules`
-cd into ps4jb-payloads
-`git fetch`
-`git branch -v -a`
-`git switch bd-jb`
-5. Put symbols.json you created into ps5-kstuff/porting_tool folder.
-6. Open terminal in this folder and run each of the following commands...
-7. `pip install gdb-tools` press ENTER
-8. `sudo apt install yasm` press ENTER
-9. `python3 main.py symbols.json your.ps5.ip.address 9020 kernel-data.bin` press ENTER - WAIT
-10. Once complete you should have kernel-data.bin dumped into porting_tool folder.
-11. Symbols.json will have also been updated to include needed information.
+1. Load Specter host and keep PS5 on ELF loading screen ...  
+  
+2. Use Oracle VM VirtualBox Or Other Linux (WSL doesnt appear to work)  
+-   May need to bridge connection with Oracle VM VirtualBox  
 
-NOTE: This tool isn't complete. This doesn't grab all the data necessary to port "ps5-kstuff" to other firmeares. It's a WIP.
+3. Clone this repository locally:  
+-    `git clone https://github.com/sleirsgoevy/ps4jb-payloads.git --recursive --recurse-submodules -b bd-jb`  
+-    Enter directroy `cd ps4jb-payloads/ps5-kstuff/porting_tool`  
+
+4. Create symbols.json and first line should be... `{"allproc": <Firmware dec #>}`
+-    Ex. `{"allproc": 41344088}`
+
+Firmware dec #  
+3.00 = 41344088  
+3.10 = 41344088  
+3.20 = 41344088  
+3.21 = 41344088  
+4.00 = 41868472  
+4.02 = 41868472  
+4.03 = 41868472  
+4.50 = 41868472  
+4.51 = 41868472  
+   
+5. Put symbols.json you created into ps5-kstuff/porting_tool folder.  
+
+6. Open terminal in this Porting_tool folder and run each of the following commands...  
+-   `pip install gdb-tools` or `sudo apt-get install gdb` press ENTER  
+-   `sudo apt install yasm` press ENTER  
+   
+7. Run `python3 main.py symbols.json <ps5_ip> <elf_loader_port> <Kernel_Filename>`  press ENTER - WAIT  
+-    Ex. `python3 main.py symbols.json 10.0.0.150 9020 kernel-data.bin`  
+  
+One complete you should have kernel-data.bin and the symbols.json will have have all the offsets in dec format.  
+
+# Supported PS5 Firmares  
+3.00, 3.10, 3.20, 3.21, 4.00, 4.02, 4.03, 4.50, 4.51  
+
+## Known issue  
+It may fail just load PS5 back to specter host and the script will continue.  
+
+NOTE: This tool isn't complete. This doesn't grab all the data necessary to port "ps5-kstuff" to other firmwares. It's a WIP.
