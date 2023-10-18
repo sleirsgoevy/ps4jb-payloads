@@ -9,7 +9,10 @@ sys.stdout = sys.__stdout__
 print(%r)
 
 while True:
-    prompt = input()
+    try: prompt = input()
+    except (EOFError, KeyboardInterrupt):
+        gdb.execute('quit')
+        break
     try: ans = eval(prompt)
     except gdb.error as e: ans = str(e)
     print(repr([[[ans]]]))
@@ -174,6 +177,37 @@ class GDB:
         self.popen = None
         self.stdio = None
 
+class BlobReceiver:
+    def __init__(self, gdb, ba, title):
+        self.ba = ba
+        self.sock, (self.host, self.port) = gdb.bind_socket()
+        self.title = title
+    def __enter__(self):
+        self.sock.__enter__()
+        self.thr = threading.Thread(target=self.run, daemon=True)
+        self.thr.start()
+        sys.stdout.write(self.title+'... ')
+        sys.stdout.flush()
+        return self.host, self.port
+    def __exit__(self, tp, err, tb):
+        try:
+            if tp is not None:
+                self.sock.close()
+            self.thr.join()
+            print()
+        finally:
+            self.sock.__exit__(tp, err, tb)
+    def run(self):
+        with self.sock.accept()[0] as sock:
+            while True:
+                q = sock.recv(4096)
+                self.ba += q
+                if not q: break
+                s = str(len(self.ba))
+                s += '\b'*len(s)
+                sys.stdout.write(s)
+                sys.stdout.flush()
+
 class R0GDB:
     def __init__(self, gdb, cflags=[]):
         self.gdb = gdb
@@ -208,3 +242,18 @@ class R0GDB:
                     raise DisconnectedException("r0gdb_trace failed")
                 self.trace_size = trace_size
         return wrapper
+    def do_trace(self, prog, rip, *args):
+        assert self.gdb.eval('r0gdb_trace_reset()') == 'void'
+        self.gdb.ieval('trace_prog = '+prog)
+        self.gdb.ieval('$pc = %s'%rip)
+        for i, j in zip(('rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9'), args):
+            self.gdb.ieval('$%s = %s'%(i, j))
+        self.gdb.execute('stepi')
+    def get_trace(self):
+        ans = bytearray()
+        with BlobReceiver(self.gdb, ans, 'dumping trace') as addr:
+            assert not self.gdb.ieval('r0gdb_trace_send("%s", %d)'%addr)
+        return bytes(ans)
+    def trace(self, *args):
+        self.do_trace(*args)
+        return self.get_trace()

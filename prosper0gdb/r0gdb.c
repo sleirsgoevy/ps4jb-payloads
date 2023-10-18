@@ -702,6 +702,12 @@ static void do_jprog(uint64_t* regs)
 static uint64_t* call_trace_base;
 static uint64_t* call_trace_start;
 static uint64_t* call_trace_end;
+static int call_trace_untrace_on_unaligned = 0;
+
+static void trace_skip_scheduler_only(uint64_t* regs)
+{
+    SKIP_SCHEDULER
+}
 
 static void trace_calls(uint64_t* regs)
 {
@@ -712,7 +718,11 @@ static void trace_calls(uint64_t* regs)
     if(regs[0] - prev_rip >= 16)
     {
         if(regs[3] == prev_rsp - 8)
+        {
             call = 1;
+            if(prev_rsp % 16 && call_trace_untrace_on_unaligned)
+                regs[2] &= -257;
+        }
         else if(regs[3] == prev_rsp + 8)
             call = 2;
     }

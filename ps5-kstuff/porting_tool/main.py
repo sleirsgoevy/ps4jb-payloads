@@ -8,7 +8,7 @@ elif len(sys.argv) not in (3, 4, 5):
     print('usage: main.py <database> <ps5 ip> [port for payload loader] [kernel data dump]')
     exit(0)
 
-import gdb_rpc
+import gdb_rpc, traces
 
 gdb = gdb_rpc.GDB(sys.argv[2]) if len(sys.argv) == 3 else gdb_rpc.GDB(sys.argv[2], int(sys.argv[3]))
 
@@ -66,30 +66,14 @@ def dump_kernel():
         if int.from_bytes(data[8:16], 'little') == len(data) - 16:
             return data[16:], int.from_bytes(data[:8], 'little')
     gdb.use_r0gdb(R0GDB_FLAGS)
-    print('dumping kdata... ', end='')
-    sys.stdout.flush()
     kdata_base = gdb.ieval('kdata_base')
     gdb.eval('offsets.allproc = '+ostr(kdata_base + symbols['allproc']))
     if not gdb.ieval('rpipe'): gdb.eval('r0gdb_init_with_offsets()')
-    sock, addr = gdb.bind_socket()
-    with sock:
+    local_buf = bytearray()
+    with gdb_rpc.BlobReceiver(gdb, local_buf, 'dumping kdata') as addr:
         remote_fd = gdb.ieval('r0gdb_open_socket("%s", %d)'%addr)
         remote_buf = gdb.ieval('malloc(1048576)')
         one_second = gdb.ieval('(void*)(uint64_t[2]){1, 0}')
-        local_buf = bytearray()
-        def appender():
-            nonlocal local_buf
-            with sock.accept()[0] as sock1:
-                while True:
-                    q = sock1.recv(4096)
-                    local_buf += q
-                    if not q: return
-                    s = str(len(local_buf))
-                    s += '\b'*len(s)
-                    sys.stdout.write(s)
-                    sys.stdout.flush()
-        thr = threading.Thread(target=appender, daemon=True)
-        thr.start()
         total_sent = 0
         while total_sent < (134 << 20):
             chk0 = gdb.ieval('copyout(%d, %d, %d)'%(remote_buf, kdata_base+total_sent, min(1048576, (134 << 20) - total_sent)))
@@ -104,8 +88,6 @@ def dump_kernel():
         while len(local_buf) != total_sent:
             gdb.eval('(int)nanosleep(%d)'%one_second)
         gdb.eval('(int)close(%d)'%remote_fd)
-    thr.join()
-    print()
     if len(sys.argv) == 5:
         with open(sys.argv[4], 'wb') as file:
             file.write(kdata_base.to_bytes(8, 'little'))
@@ -374,10 +356,13 @@ def wrmsr_ret():
 def do_use_r0gdb_trace():
     do_use_r0gdb_raw()
     kdata_base = gdb.ieval('kdata_base')
-    gdb.ieval('offsets.rdmsr_start = %d'%(kdata_base+symbols['rdmsr_start']))
-    gdb.ieval('offsets.wrmsr_ret = %d'%(kdata_base+symbols['wrmsr_ret']))
+    gdb.ieval('offsets.rdmsr_start = '+ostr(kdata_base+symbols['rdmsr_start']))
+    gdb.ieval('offsets.wrmsr_ret = '+ostr(kdata_base+symbols['wrmsr_ret']))
+    gdb.ieval('offsets.nop_ret = '+ostr(kdata_base+symbols['wrmsr_ret']+2))
     if 'rep_movsb_pop_rbp_ret' in symbols:
-        gdb.ieval('offsets.rep_movsb_pop_rbp_ret = %d'%(kdata_base+symbols['rep_movsb_pop_rbp_ret']))
+        gdb.ieval('offsets.rep_movsb_pop_rbp_ret = '+ostr(kdata_base+symbols['rep_movsb_pop_rbp_ret']))
+    if 'cpu_switch' in symbols:
+        gdb.ieval('offsets.cpu_switch = '+ostr(kdata_base+symbols['cpu_switch']))
 
 use_r0gdb_trace = r0gdb.use_trace_fn(do_use_r0gdb_trace)
 
@@ -412,7 +397,49 @@ def rep_movsb_pop_rbp_ret():
     gdb.execute('stepi')
     gdb.execute('stepi')
     assert gdb.ieval('$rbp == 0x1234 && $rip == 0x5678')
+    # set the offset now, so that the tracing does not need to be restarted
+    gdb.ieval('offsets.rep_movsb_pop_rbp_ret = '+ostr(rep_movsb))
     return rep_movsb - kdata_base
+
+@derive_symbol
+@retry_on_error
+def cpu_switch():
+    use_r0gdb_trace(16777216)
+    kdata_base = gdb.ieval('kdata_base')
+    candidates = []
+    gdb.ieval('call_trace_untrace_on_unaligned = 1')
+    while len(candidates) != 1:
+        del candidates[:]
+        trace = traces.Trace(r0gdb.trace('trace_calls', '(void*)dlsym(0x2001, "_nanosleep")', '(uint64_t[2]){1, 0}', '0'))
+        for i in range(1, len(trace)):
+            if trace.is_jump(i-1) and trace[i].rsp not in range(trace[i-1].rsp-8, trace[i-1].rsp+9) and trace[i-1].rip >= 2**63 and trace[i].rip >= 2**63:
+                candidates.append(i-1)
+    gdb.ieval('call_trace_untrace_on_unaligned = 0')
+    callee = candidates[0]
+    assert trace[callee].rsp % 16 == 0
+    caller1 = trace.find_caller(callee)
+    assert trace[caller1].rsp % 16 == 8
+    caller2 = trace.find_caller(caller1)
+    assert trace[caller2].rsp % 16 == 0
+    cpu_switch = trace[caller2+1].rip
+    # set the offset now, so that the tracing does not need to be restarted
+    gdb.ieval('offsets.cpu_switch = '+ostr(cpu_switch))
+    return cpu_switch - kdata_base
+
+@derive_symbols('syscall_before', 'syscall_after')
+@retry_on_error
+def syscall_before():
+    use_r0gdb_trace(16777216)
+    #__import__('pdb').set_trace()
+    kdata_base = gdb.ieval('kdata_base')
+    trace = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', '(void*)dlsym(0x2001, "getpid")'))
+    sys_getpid = gdb.ieval('{void*}%d'%(kdata_base+symbols['sysents']+48*20+8))
+    idx_getpid = trace.find_next_rip(0, sys_getpid)
+    idx_syscall_after = trace.find_next_instr(idx_getpid-1)
+    idx_syscall_before = idx_getpid - 1
+    while sys_getpid in trace[idx_syscall_before]:
+        idx_syscall_before -= 1
+    return trace[idx_syscall_before].rip - kdata_base, trace[idx_syscall_after].rip - kdata_base
 
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')
