@@ -401,10 +401,11 @@ def rep_movsb_pop_rbp_ret():
     gdb.ieval('offsets.rep_movsb_pop_rbp_ret = '+ostr(rep_movsb))
     return rep_movsb - kdata_base
 
-@derive_symbol
+@derive_symbols('cpu_switch', 'pmap_activate_sw')
 @retry_on_error
 def cpu_switch():
     use_r0gdb_trace(16777216)
+    gdb.ieval('offsets.cpu_switch = 0')
     kdata_base = gdb.ieval('kdata_base')
     candidates = []
     gdb.ieval('call_trace_untrace_on_unaligned = 1')
@@ -424,13 +425,12 @@ def cpu_switch():
     cpu_switch = trace[caller2+1].rip
     # set the offset now, so that the tracing does not need to be restarted
     gdb.ieval('offsets.cpu_switch = '+ostr(cpu_switch))
-    return cpu_switch - kdata_base
+    return cpu_switch - kdata_base, trace[callee].rip - kdata_base
 
 @derive_symbols('syscall_before', 'syscall_after')
 @retry_on_error
 def syscall_before():
     use_r0gdb_trace(16777216)
-    #__import__('pdb').set_trace()
     kdata_base = gdb.ieval('kdata_base')
     trace = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', '(void*)dlsym(0x2001, "getpid")'))
     sys_getpid = gdb.ieval('{void*}%d'%(kdata_base+symbols['sysents']+48*20+8))
@@ -440,6 +440,46 @@ def syscall_before():
     while sys_getpid in trace[idx_syscall_before]:
         idx_syscall_before -= 1
     return trace[idx_syscall_before].rip - kdata_base, trace[idx_syscall_after].rip - kdata_base
+
+@derive_symbols('mov_rdi_cr3', 'mov_cr3_rax')
+#@retry_on_error
+def mov_rdi_cr3():
+    use_r0gdb_raw(do_r0gdb=False)
+    kdata_base = gdb.ieval('kdata_base')
+    thread = gdb.ieval('get_thread()')
+    use_r0gdb_raw(do_r0gdb=True)
+    gdb.ieval('$pc = '+ostr(kdata_base+symbols['pmap_activate_sw']))
+    gdb.ieval('$rdi = '+ostr(thread))
+    print('single-stepping...')
+    def step():
+        gdb.execute('stepi')
+        print(hex(gdb.ieval('$pc')))
+    step()
+    while gdb.ieval('(void*)$rdi') == thread:
+        gdb.ieval('$eflags = 0x102')
+        pc = gdb.ieval('$pc')
+        step()
+    mov_rdi_cr3 = pc
+    assert gdb.ieval('$pc') - mov_rdi_cr3 == 3
+    cr3 = gdb.ieval('(void*)$rdi')
+    assert cr3 < 2**39 and not cr3 % 4096
+    while gdb.ieval('(void*)$rax') != cr3:
+        step()
+    # the next instruction is 3-byte, but not "mov cr3, rax"
+    step()
+    pc = gdb.ieval('$pc')
+    while gdb.ieval('$pc') != pc + 3:
+        gdb.ieval('$eflags = 0x102')
+        pc = gdb.ieval('$pc')
+        step()
+    # this is probably the one, check that it crashes
+    mov_cr3_rax = pc
+    gdb.ieval('$pc = '+ostr(pc))
+    gdb.ieval('$rax = 0')
+    try: gdb.execute('stepi')
+    except gdb_rpc.DisconnectedException: pass
+    else: assert False, "not mov cr3, rax"
+    return mov_rdi_cr3 - kdata_base, mov_cr3_rax - kdata_base
 
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')

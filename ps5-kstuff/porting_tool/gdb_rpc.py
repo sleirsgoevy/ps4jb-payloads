@@ -218,24 +218,25 @@ class R0GDB:
         self.trace_size = -2
     def use_raw_fn(self, fn):
         @functools.wraps(fn)
-        def wrapper():
-            if self.trace_size not in (-1, -2):
+        def wrapper(do_r0gdb=True, *args, **kwds):
+            if self.trace_size not in ((-1, -2) if do_r0gdb else (-1,)):
                 self.gdb.kill()
             if self.gdb.use_r0gdb(self.cflags):
                 self.trace_size = -1
-                fn()
+                fn(*args, **kwds)
             if self.trace_size == -1:
-                self.gdb.execute('p r0gdb()')
-                self.trace_size = -2
+                if do_r0gdb:
+                    self.gdb.execute('p r0gdb()')
+                    self.trace_size = -2
         return wrapper
     def use_trace_fn(self, fn):
         @functools.wraps(fn)
-        def wrapper(trace_size):
+        def wrapper(trace_size, *args, **kwds):
             if self.trace_size < -1:
                 self.gdb.kill()
             if self.gdb.use_r0gdb(self.cflags):
                 self.trace_size = -1
-                fn()
+                fn(*args, **kwds)
             if trace_size > self.trace_size:
                 if ' = void\n' not in self.gdb.execute('p r0gdb_trace('+str(trace_size)+')'):
                     self.gdb.kill()
