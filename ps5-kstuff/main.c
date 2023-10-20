@@ -359,37 +359,70 @@ struct module_info_ex
     uint32_t ref_count;
 };
 
-static void patch_shellcore(void)
+struct shellcore_patch
+{
+    uint64_t offset;
+    char* data;
+    size_t sz;
+};
+
+static struct shellcore_patch shellcore_patches_403[] = {
+    {0x974fee, "\x52\xeb\x08\x66\x90", 5},
+    {0x974ff9, "\xe8\xd2\xfb\xff\xff\x58\xc3", 7},
+    {0x974bc1, "\x31\xc0\x50\xeb\xe3", 5},
+    {0x974ba9, "\xe8\x22\x00\x00\x00\x58\xc3", 7},
+    {0x5307f9, "\xeb\x04", 2},
+    {0x26f35c, "\xeb\x04", 2},
+    {0x54e1f0, "\xeb", 1},
+    {0x536e1d, "\x90\xe9", 2},
+    {0x54db8f, "\xeb", 1},
+    {0x55137a, "\xc8\x00\x00\x00", 4},
+    {0x1a12d1, "\xe8\xea\x88\x47\x00\x31\xc9\xff\xc1\xe9\xf4\x02\x00\x00", 14},
+    {0x1a15d3, "\x83\xf8\x02\x0f\x43\xc1\xe9\x29\xfa\xff\xff", 11},
+    {0x1a0fe5, "\xe9\xe7\x02\x00\x00", 5},
+};
+
+extern char _start[];
+
+static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches, uint64_t* eh_frame_offset)
+{
+#define FW(x, eh_frame)\
+    case 0x ## x:\
+        *eh_frame_offset = eh_frame;\
+        *n_patches = sizeof(shellcore_patches_ ## x) / sizeof(*shellcore_patches_ ## x);\
+        patches = shellcore_patches_ ## x;\
+        break
+    int(*sceKernelGetProsperoSystemSwVersion)(uint32_t*) = dlsym((void*)0x2001, "sceKernelGetProsperoSystemSwVersion");
+    uint32_t buf[10];
+    sceKernelGetProsperoSystemSwVersion(buf);
+    uint32_t ver = buf[9] >> 16;
+    struct shellcore_patch* patches;
+    switch(ver)
+    {
+    FW(403, 0x13c0000);
+    default:
+        *n_patches = 1;
+        return 0;
+    }
+#undef FW
+    static uint64_t start_nonreloc = (uint64_t)_start;
+    uint64_t start = (uint64_t)_start;
+    for(size_t i = 0; i < *n_patches; i++)
+        patches[i].data += start - start_nonreloc;
+    return patches;
+}
+
+static void patch_shellcore(const struct shellcore_patch* patches, size_t n_patches, uint64_t eh_frame_offset)
 {
     int pid = find_proc("SceShellCore");
     struct module_info_ex mod_info;
     mod_info.st_size = sizeof(mod_info);
     remote_syscall(pid, SYS_dynlib_get_info_ex, 0, 0, &mod_info);
-    uint64_t shellcore_base = mod_info.eh_frame_hdr_addr - 0x13c0000;
-    struct
-    {
-        uint64_t addr;
-        void* data;
-        size_t sz;
-    } patches[] = {
-        {shellcore_base+0x974fee, "\x52\xeb\x08\x66\x90", 5},
-        {shellcore_base+0x974ff9, "\xe8\xd2\xfb\xff\xff\x58\xc3", 7},
-        {shellcore_base+0x974bc1, "\x31\xc0\x50\xeb\xe3", 5},
-        {shellcore_base+0x974ba9, "\xe8\x22\x00\x00\x00\x58\xc3", 7},
-        {shellcore_base+0x5307f9, "\xeb\x04", 2},
-        {shellcore_base+0x26f35c, "\xeb\x04", 2},
-        {shellcore_base+0x54e1f0, "\xeb", 1},
-        {shellcore_base+0x536e1d, "\x90\xe9", 2},
-        {shellcore_base+0x54db8f, "\xeb", 1},
-        {shellcore_base+0x55137a, "\xc8\x00\x00\x00", 4},
-        {shellcore_base+0x1a12d1, "\xe8\xea\x88\x47\x00\x31\xc9\xff\xc1\xe9\xf4\x02\x00\x00", 14},
-        {shellcore_base+0x1a15d3, "\x83\xf8\x02\x0f\x43\xc1\xe9\x29\xfa\xff\xff", 11},
-        {shellcore_base+0x1a0fe5, "\xe9\xe7\x02\x00\x00", 5},
-    };
-    for(int i = 0; i < sizeof(patches) / sizeof(*patches); i++)
+    uint64_t shellcore_base = mod_info.eh_frame_hdr_addr - eh_frame_offset;
+    for(int i = 0; i < n_patches; i++)
     {
         uint64_t arg1[4] = {1, 0x13};
-        uint64_t arg2[8] = {pid, patches[i].addr, (uint64_t)patches[i].data, patches[i].sz};
+        uint64_t arg2[8] = {pid, shellcore_base + patches[i].offset, (uint64_t)patches[i].data, patches[i].sz};
         uint64_t arg3[4] = {0};
         kekcall((uint64_t)arg1, (uint64_t)arg2, (uint64_t)arg3, 0, 0, 0, SYS_mdbg_call);
     }
@@ -453,6 +486,14 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     if(!desc)
     {
         notify("your firmware is not supported (ps5-kstuff)");
+        return 1;
+    }
+    size_t n_shellcore_patches;
+    uint64_t shellcore_eh_frame_offset;
+    const struct shellcore_patch* shellcore_patches = get_shellcore_patches(&n_shellcore_patches, &shellcore_eh_frame_offset);
+    if(n_shellcore_patches && !shellcore_patches)
+    {
+        notify("your firmware is not supported (shellcore)");
         return 1;
     }
     uint64_t percpu_ist4[NCPUS];
@@ -625,7 +666,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     sigaction(SIGPIPE, &sa, 0);
     copyin(IDT+16*9+5, "\x8e", 1);
     copyin(IDT+16*179+5, "\x8e", 1);
-    patch_shellcore();
+    patch_shellcore(shellcore_patches, n_shellcore_patches, shellcore_eh_frame_offset);
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\npatching app.db... ", (uintptr_t)24);
     patch_app_db();
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
