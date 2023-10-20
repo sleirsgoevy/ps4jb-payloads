@@ -442,7 +442,7 @@ def syscall_before():
     return trace[idx_syscall_before].rip - kdata_base, trace[idx_syscall_after].rip - kdata_base
 
 @derive_symbols('mov_rdi_cr3', 'mov_cr3_rax')
-#@retry_on_error
+@retry_on_error
 def mov_rdi_cr3():
     use_r0gdb_raw(do_r0gdb=False)
     kdata_base = gdb.ieval('kdata_base')
@@ -480,6 +480,62 @@ def mov_rdi_cr3():
     except gdb_rpc.DisconnectedException: pass
     else: assert False, "not mov cr3, rax"
     return mov_rdi_cr3 - kdata_base, mov_cr3_rax - kdata_base
+
+@derive_symbols('dr2gpr_start', 'gpr2dr_1_start', 'gpr2dr_2_start')
+@retry_on_error
+def dr2gpr_start():
+    use_r0gdb_trace(16777216)
+    kdata_base = gdb.ieval('kdata_base')
+    gdb.ieval('offsets.syscall_after = '+ostr(kdata_base+symbols['syscall_after']))
+    # enable the "has debug regs" flag
+    td = gdb.ieval('get_thread()')
+    pcb = gdb.ieval('{void*}%d'%(td+0x3f8))
+    assert gdb.ieval('{int}%d'%(pcb+0x100)) == 24 # sanity check in case offsets have shifted
+    gdb.ieval('{int}%d = 26'%(pcb+0x100))
+    # trace nanosleep to get the 3rd argument to cpu_switch
+    trace = traces.Trace(r0gdb.trace('trace_calls', '(void*)dlsym(0x2001, "_nanosleep")', '(uint64_t[2]){1, 0}', '0'))
+    cpu_switch = trace.find_next_rip(0, kdata_base + symbols['cpu_switch'])
+    assert td == trace[cpu_switch].rdi
+    mtx = trace[cpu_switch].rdx
+    # now trace the entirety of cpu_switch
+    getpid = gdb.ieval('{void*}%d'%(kdata_base+symbols['sysents']+20*48+8))
+    gdb.ieval('fncall_fn = '+ostr(kdata_base+symbols['cpu_switch']))
+    gdb.ieval('(fncall_args[0] = fncall_args[1] = %d, fncall_args[2] = %d)'%(td, mtx))
+    gdb.ieval('fncall_no_untrace = 1')
+    gdb.ieval('sys_getpid = '+ostr(getpid))
+    gdb.ieval('offsets.cpu_switch = 0')
+    trace2 = traces.Trace(r0gdb.trace('getpid_to_fncall', '(void*)dlsym(0x2001, "getpid")'))
+    gdb.ieval('offsets.cpu_switch = '+ostr(kdata_base + symbols['cpu_switch']))
+    #globals()['huj'] = trace2
+    cpu_switch = trace2.find_next_rip(0, kdata_base + symbols['cpu_switch'])
+    # we've traced the dbreg get/set code, now find it using magic values in registers
+    dr2gpr_start = j = trace2.find_next_reg(cpu_switch, 'r11', 0xffff4ff0)
+    while not trace2.is_jump(dr2gpr_start-1): dr2gpr_start -= 1
+    while trace2[j].r11 == 0xffff4ff0: j += 1
+    gpr2dr_1_start = trace2.find_next_reg(j, 'r11', 0xffff4ff0)
+    while trace2[gpr2dr_1_start].rcx != 0x400: gpr2dr_1_start += 1
+    gpr2dr_2_start = trace2.find_next_reg(gpr2dr_1_start, 'rcx', 0xc0011024)
+    while not trace2[gpr2dr_2_start].rdx: gpr2dr_2_start += 1
+    dr2gpr_start = trace2[dr2gpr_start].rip
+    gpr2dr_1_start = trace2[gpr2dr_1_start].rip
+    gpr2dr_2_start = trace2[gpr2dr_2_start].rip
+    # verify the newly-found offsets
+    buf = gdb.ieval('malloc(48)')
+    gdb.ieval('offsets.dr2gpr_start = '+ostr(dr2gpr_start))
+    gdb.ieval('offsets.gpr2dr_1_start = '+ostr(gpr2dr_1_start))
+    gdb.ieval('offsets.gpr2dr_2_start = '+ostr(gpr2dr_2_start))
+    assert 'void' == gdb.eval('r0gdb_read_dbregs(%d)'%buf)
+    regs = [gdb.ieval('{void*}%d'%(buf+8*i)) for i in range(6)]
+    assert regs == [0, 0, 0, 0, 0xffff4ff0, 0x400]
+    regs = expected = [0x123, 0x456, 0x789, 0xabc, 0, 0x455]
+    for i, j in enumerate(regs): gdb.ieval('{void*}%d = %d'%(buf+8*i, j))
+    assert 'void' == gdb.eval('r0gdb_write_dbregs(%d)'%buf)
+    for i, j in enumerate(regs): gdb.ieval('{void*}%d = 0'%(buf+8*i))
+    assert 'void' == gdb.eval('r0gdb_read_dbregs(%d)'%buf)
+    regs = [gdb.ieval('{void*}%d'%(buf+8*i)) for i in range(6)]
+    expected[4] = 0xffff4ff0
+    assert regs == expected, ("dbregs do not match after readout", list(map(hex, regs)), list(map(hex, expected)))
+    return dr2gpr_start - kdata_base, gpr2dr_1_start - kdata_base, gpr2dr_2_start - kdata_base
 
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')

@@ -905,6 +905,7 @@ int mdbg_call_20(void* a, void* b, void* c)
 static uint64_t fncall_fn = 0;
 static uint64_t fncall_args[6];
 static uint64_t fncall_ans = 0;
+static int fncall_no_untrace = 0;
 
 static void getpid_to_fncall(uint64_t* regs)
 {
@@ -918,7 +919,14 @@ static void getpid_to_fncall(uint64_t* regs)
         regs[6] = fncall_args[3];
         regs[13] = fncall_args[4];
         regs[14] = fncall_args[5];
-        untrace_fn(regs);
+        if(fncall_no_untrace)
+        {
+            regs[3] -= 8;
+            kmemcpy((void*)regs[3], &regs[0], 8);
+            regs[0] = offsets.nop_ret;
+        }
+        else
+            untrace_fn(regs);
     }
     else if(regs[0] == offsets.syscall_after)
     {
