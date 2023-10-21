@@ -367,19 +367,19 @@ struct shellcore_patch
 };
 
 static struct shellcore_patch shellcore_patches_403[] = {
-    {0x974fee, "\x52\xeb\x08\x66\x90", 5},
-    {0x974ff9, "\xe8\xd2\xfb\xff\xff\x58\xc3", 7},
-    {0x974bc1, "\x31\xc0\x50\xeb\xe3", 5},
-    {0x974ba9, "\xe8\x22\x00\x00\x00\x58\xc3", 7},
-    {0x5307f9, "\xeb\x04", 2},
-    {0x26f35c, "\xeb\x04", 2},
-    {0x54e1f0, "\xeb", 1},
-    {0x536e1d, "\x90\xe9", 2},
-    {0x54db8f, "\xeb", 1},
-    {0x55137a, "\xc8\x00\x00\x00", 4},
-    {0x1a12d1, "\xe8\xea\x88\x47\x00\x31\xc9\xff\xc1\xe9\xf4\x02\x00\x00", 14},
-    {0x1a15d3, "\x83\xf8\x02\x0f\x43\xc1\xe9\x29\xfa\xff\xff", 11},
-    {0x1a0fe5, "\xe9\xe7\x02\x00\x00", 5},
+    {0x974fee, "\x52\xeb\x08\x66\x90", 5}, //push rdx; jmp 0x974ff9; 2-byte nop
+    {0x974ff9, "\xe8\xd2\xfb\xff\xff\x58\xc3", 7}, //call 0x974bd0; pop rax; ret
+    {0x974bc1, "\x31\xc0\x50\xeb\xe3", 5}, //xor eax, eax; push rax; jmp 0x974ba9
+    {0x974ba9, "\xe8\x22\x00\x00\x00\x58\xc3", 7}, //call 0x974bd0; pop rax; ret
+    {0x5307f9, "\xeb\x04", 2}, //jmp 0x5307ff
+    {0x26f35c, "\xeb\x04", 2}, //jmp 0x26f362
+    {0x54e1f0, "\xeb", 1}, //jmp (destination unchanged)
+    {0x536e1d, "\x90\xe9", 2}, //nop; jmp (destination unchanged)
+    {0x54db8f, "\xeb", 1}, //jmp (destination unchanged)
+    {0x55137a, "\xc8\x00\x00\x00", 4}, //(jmp opcode unchanged) 0x551446
+    {0x1a12d1, "\xe8\xea\x88\x47\x00\x31\xc9\xff\xc1\xe9\xf4\x02\x00\x00", 14}, //call 0x619bc0; xor ecx, ecx; inc ecx; jmp 0x1a15d3
+    {0x1a15d3, "\x83\xf8\x02\x0f\x43\xc1\xe9\x29\xfa\xff\xff", 11}, //cmp eax, 2; cmovae eax, ecx; jmp 0x1a1007
+    {0x1a0fe5, "\xe9\xe7\x02\x00\x00", 5}, //jmp 0x1a12d1
 };
 
 extern char _start[];
