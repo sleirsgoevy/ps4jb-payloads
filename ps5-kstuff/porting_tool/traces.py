@@ -45,3 +45,8 @@ class Trace:
             else:
                 return idx + 1
         return None
+    def find_last_ret(self, idx):
+        idx -= 1
+        while idx >= 0 and not (self.is_jump(idx) and self[idx+1].rsp == self[idx].rsp + 8):
+            idx -= 1
+        return idx if idx >= 0 else None

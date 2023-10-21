@@ -537,6 +537,44 @@ def dr2gpr_start():
     assert regs == expected, ("dbregs do not match after readout", list(map(hex, regs)), list(map(hex, expected)))
     return dr2gpr_start - kdata_base, gpr2dr_1_start - kdata_base, gpr2dr_2_start - kdata_base
 
+@derive_symbols('malloc', 'M_something')
+@retry_on_error
+def malloc():
+    use_r0gdb_trace(16777216)
+    kdata_base = gdb.ieval('kdata_base')
+    gdb.ieval('jprog = (uint64_t[1]){0}')
+    # use the ipv6 rthdr allocation to find malloc
+    # 1224 is a valid size for rthdr, and prosper0gdb already has set_rthdr_size function that wraps the raw ioctl
+    remote_sock = gdb.ieval('(int)socket(28, 2, 0)') # udpv6
+    trace = traces.Trace(r0gdb.trace('do_jprog', 'set_rthdr_size', remote_sock, 1224))
+    malloc_call, = (i for i in range(len(trace)) if trace.is_jump(i) and trace[i+1].rsp == trace[i].rsp-8 and trace[i].rdi == 1224 and trace[i].rdx == 1)
+    malloc = trace[malloc_call+1].rip
+    M_something = trace[malloc_call+1].rsi
+    return malloc - kdata_base, M_something - kdata_base
+
+@derive_symbol
+@retry_on_error
+def mprotect_fix_start():
+    use_r0gdb_trace(16777216)
+    kdata_base = gdb.ieval('kdata_base')
+    gdb.ieval('jprog = (uint64_t[1]){0}')
+    buf = gdb.ieval('malloc(16384)')
+    # get 2 traces to diff
+    trace1 = traces.Trace(r0gdb.trace('do_jprog', '(void*)dlsym(0x2001, "mprotect")', buf, 1, 3))
+    trace2 = traces.Trace(r0gdb.trace('do_jprog', '(void*)dlsym(0x2001, "mprotect")', buf, 1, 7))
+    # determine the point of divergence
+    i1 = trace1.find_next_rip(0, kdata_base + symbols['syscall_after'])
+    i2 = trace2.find_next_rip(0, kdata_base + symbols['syscall_after'])
+    j1 = trace1.find_last_callee_ret(trace1.find_last_callee_ret(i1))
+    j2 = trace2.find_last_callee_ret(trace2.find_last_callee_ret(i2))
+    k1 = trace1.find_caller(j1) + 1
+    k2 = trace2.find_caller(j2) + 1
+    while k1 < j1 and k2 < j2 and trace1[k1].rip == trace2[k2].rip:
+        k1 = trace1.find_next_instr(k1)
+        k2 = trace2.find_next_instr(k2)
+    assert k1 < j1 and k2 < j2 and trace1[k1-1].rip == trace2[k2-1].rip
+    return trace1[k1-1].rip - kdata_base
+
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')
 
