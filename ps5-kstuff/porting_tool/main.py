@@ -542,11 +542,10 @@ def dr2gpr_start():
 def malloc():
     use_r0gdb_trace(16777216)
     kdata_base = gdb.ieval('kdata_base')
-    gdb.ieval('jprog = (uint64_t[1]){0}')
     # use the ipv6 rthdr allocation to find malloc
     # 1224 is a valid size for rthdr, and prosper0gdb already has set_rthdr_size function that wraps the raw ioctl
     remote_sock = gdb.ieval('(int)socket(28, 2, 0)') # udpv6
-    trace = traces.Trace(r0gdb.trace('do_jprog', 'set_rthdr_size', remote_sock, 1224))
+    trace = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', 'set_rthdr_size', remote_sock, 1224))
     malloc_call, = (i for i in range(len(trace)) if trace.is_jump(i) and trace[i+1].rsp == trace[i].rsp-8 and trace[i].rdi == 1224 and trace[i].rdx == 1)
     malloc = trace[malloc_call+1].rip
     M_something = trace[malloc_call+1].rsi
@@ -557,11 +556,10 @@ def malloc():
 def mprotect_fix_start():
     use_r0gdb_trace(16777216)
     kdata_base = gdb.ieval('kdata_base')
-    gdb.ieval('jprog = (uint64_t[1]){0}')
     buf = gdb.ieval('malloc(16384)')
     # get 2 traces to diff
-    trace1 = traces.Trace(r0gdb.trace('do_jprog', '(void*)dlsym(0x2001, "mprotect")', buf, 1, 3))
-    trace2 = traces.Trace(r0gdb.trace('do_jprog', '(void*)dlsym(0x2001, "mprotect")', buf, 1, 7))
+    trace1 = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', '(void*)dlsym(0x2001, "mprotect")', buf, 1, 3))
+    trace2 = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', '(void*)dlsym(0x2001, "mprotect")', buf, 1, 7))
     # determine the point of divergence
     i1 = trace1.find_next_rip(0, kdata_base + symbols['syscall_after'])
     i2 = trace2.find_next_rip(0, kdata_base + symbols['syscall_after'])
@@ -574,6 +572,37 @@ def mprotect_fix_start():
         k2 = trace2.find_next_instr(k2)
     assert k1 < j1 and k2 < j2 and trace1[k1-1].rip == trace2[k2-1].rip
     return trace1[k1-1].rip - kdata_base
+
+@derive_symbols('sigaction_fix_start', 'sigaction_fix_end')
+@retry_on_error
+def sigaction_fix_start():
+    use_r0gdb_trace(16777216)
+    kdata_base = gdb.ieval('kdata_base')
+    buf = gdb.ieval(r'&"\x01"') # sa_handler = SIG_IGN
+    tr = [
+        traces.Trace(r0gdb.trace('trace_skip_scheduler_only', '(void*)dlsym(0x2001, "getpid")+7', i, buf, 0, 0, 0, 0, 416))
+        for i in (15, 9, 17) # SIGTERM, SIGKILL, SIGSTOP
+    ]
+    i = [i.find_next_rip(0, kdata_base+symbols['syscall_after']) for i in tr]
+    j = [i.find_caller(j-1)+1 for i, j in zip(tr, i)]
+    k = None
+    while len({i[j].rip for i, j in zip(tr, j)}) == 1:
+        k = j
+        j = [i.find_next_instr(j) for i, j in zip(tr, j)]
+    assert k is not None
+    source = tr[0][k[0]].rip
+    while tr[0][k[0]].rip in (tr[1][k[1]].rip, tr[2][k[2]].rip):
+        k = [i.find_next_instr(j) for i, j in zip(tr, k)]
+    dst = tr[0][k[0]].rip
+    return source - kdata_base, dst - kdata_base
+
+def find_file_string(tail):
+    kdata, kdata_base = get_kernel()
+    q = kdata.find(tail+b'\0') - 18
+    assert kdata.find(tail, q+19) < 0
+    assert kdata[q:q+10] == b'W:\\Build\\'
+    assert kdata[q+10:q+18].decode('latin-1').isnumeric()
+    return q
 
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')

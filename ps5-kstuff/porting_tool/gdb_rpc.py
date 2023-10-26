@@ -247,7 +247,7 @@ class R0GDB:
         assert self.gdb.eval('r0gdb_trace_reset()') == 'void'
         self.gdb.ieval('trace_prog = '+prog)
         self.gdb.ieval('$pc = %s'%rip)
-        for i, j in zip(('rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9'), args):
+        for i, j in zip(('rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9', 'rax'), args):
             self.gdb.ieval('$%s = %s'%(i, j))
         self.gdb.execute('stepi')
     def get_trace(self):
