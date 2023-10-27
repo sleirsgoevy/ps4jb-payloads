@@ -604,6 +604,89 @@ def find_file_string(tail):
     assert kdata[q+10:q+18].decode('latin-1').isnumeric()
     return q
 
+@derive_symbol
+@retry_on_error
+def mmap_self_fix_2_start():
+    use_r0gdb_trace(16777216)
+    kdata_base = gdb.ieval('kdata_base')
+    fd = gdb.ieval('(int)open("/system/common/lib/libScePlayerInvitationDialog.sprx", 0)')
+    assert fd >= 0
+    trace = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', '(void*)dlsym(0x2001, "mmap")', 0, 16384, 1, 0x80001, fd, 0))
+    gdb.ieval('(int)close(%d)'%fd)
+    i = trace.find_next_rip(0, kdata_base + symbols['syscall_after'])
+    for j in range(3):
+        i = trace.find_last_callee_ret(i)
+    j = trace.find_caller(i) + 1
+    while j < i and trace[j+1].rip != trace[j].rip + 16:
+        j = trace.find_next_instr(j)
+    assert j < i
+    return trace[j].rip - kdata_base
+
+@derive_symbol
+@retry_on_error
+def mmap_self_fix_1_start():
+    use_r0gdb_trace(16777216)
+    kdata_base = gdb.ieval('kdata_base')
+    gdb.ieval('offsets.mmap_self_fix_2_start = '+ostr(kdata_base+symbols['mmap_self_fix_2_start']))
+    gdb.ieval('offsets.mmap_self_fix_2_end = '+ostr(kdata_base+symbols['mmap_self_fix_2_start']+2))
+    fd = gdb.ieval('(int)open("/mini-syscore.elf", 0)')
+    assert fd >= 0
+    trace = traces.Trace(r0gdb.trace('fix_mmap_self', '(void*)dlsym(0x2001, "mmap")', 0, 16384, 1, 0x80001, fd, 0))
+    gdb.ieval('(int)close(%d)'%fd)
+    # find the function that returns a specific error code
+    for i in range(len(trace)-1):
+        if trace.is_jump(i) and trace[i+1].rsp == trace[i].rsp + 8 and trace[i].rax == 0x800f0d3a:
+            break
+    else: assert False
+    i += 1
+    # trace the successful path from there on r0gdb
+    r0gdb.trace_to_raw()
+    gdb.ieval('$pc = '+ostr(trace[i].rip))
+    gdb.ieval('$rax = 0')
+    while gdb.ieval('$pc') == trace[i].rip:
+        i += 1
+        gdb.execute('stepi')
+    # we've found the source and destination, verify their relative offset
+    source = trace[i-1].rip
+    dst = gdb.ieval('$pc')
+    assert dst == source + 2
+    return source - kdata_base
+
+@derive_symbol
+@retry_on_error
+def mdbg_call_fix():
+    use_r0gdb_trace(16777216)
+    kdata_base = gdb.ieval('kdata_base')
+    # prepare mdbg_call arguments
+    buf = gdb.ieval('malloc(1)')
+    arg1 = gdb.ieval('(uint64_t)(uint64_t[4]){1, 0x12}')
+    arg2 = gdb.ieval('(uint64_t)(uint64_t[8]){(int)getpid(), (void*)dlsym(0x2001, "getpid"), %d, 1}'%buf)
+    arg3 = gdb.ieval('(uint64_t)(uint64_t[4]){}')
+    # run mdbg_call with and without the debugger cred
+    trace1 = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', '(void*)dlsym(0x2001, "getpid")+7', arg1, arg2, arg3, 0, 0, 0, 573))
+    gdb.ieval('{void*}({void*}({void*}(get_thread()+8)+0x40)+88) = 0x4800000000000036')
+    trace2 = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', '(void*)dlsym(0x2001, "getpid")+7', arg1, arg2, arg3, 0, 0, 0, 573))
+    # find the inner mdbg_call funcion
+    i = trace1.find_next_rip(0, kdata_base + symbols['syscall_after'])
+    j = trace1.find_last_callee_ret(i-1)
+    k1 = trace1.find_caller(j)+1
+    k2 = trace2.find_next_rip(0, trace1[k1].rip)
+    # trace until we find the function that returns different values (0 vs 1)
+    while not (trace1[k1].rax == 0 and trace2[k2].rax == 1):
+        k1 = trace1.find_next_instr(k1)
+        k2 = trace2.find_next_instr(k2)
+    assert trace1.is_jump(k1-1)
+    assert trace2.is_jump(k2-1)
+    k1 = trace1.find_caller(k1-1)
+    k2 = trace1.find_caller(k2-1)
+    assert trace1[k1].rip == trace2[k2].rip
+    # trace the inner cred checking function to find the point of divergence
+    while not (trace1[k1].rax == 0 and trace2[k2].rax == 1):
+        k1 += 1
+        k2 += 1
+    assert trace1[k1].rip == trace2[k2].rip
+    return trace1[k1].rip - kdata_base
+
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')
 
