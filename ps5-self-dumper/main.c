@@ -10,6 +10,7 @@
 #include <netinet/in.h>
 #include <signal.h>
 #include <ucontext.h>
+#include <stdarg.h>
 
 asm("segv_memcpy:\nmov %rdx,%rcx\nsegv_memcpy_fault:\nrep movsb\nxor %eax, %eax\nret");
 
@@ -246,6 +247,15 @@ struct memfd dump_elf(const char* path)
     return out;
 }
 
+struct memfd dump_elf_auth_info(const char* path)
+{
+    struct memfd ans = {};
+    char auth_info[0x88];
+    if(!get_self_auth_info_20(path, auth_info))
+        memfd_pwrite(&ans, auth_info, 0x88, 0);
+    return ans;
+}
+
 struct my_dirent
 {
     uintptr_t path;
@@ -411,6 +421,57 @@ static void print_tree(struct memfd* memfd)
 }
 #endif
 
+void send_tar_entry(int sock, struct memfd* data, const char* path1, ...)
+{
+    char tar_header[512] = {0};
+    va_list va;
+    va_start(va, path1);
+    const char* cur = path1;
+    while(cur && *cur == '/')
+    {
+        while(*cur == '/')
+            cur++;
+        if(!*cur)
+            cur = va_arg(va, const char*);
+    }
+    size_t i = 0;
+    while(i < 99)
+    {
+        while(cur && !*cur)
+            cur = va_arg(va, const char*);
+        if(!cur)
+            break;
+        while(i < 99 && *cur)
+                tar_header[i++] = *cur++;
+    }
+    va_end(va);
+    tar_header[100] = '1';
+    tar_header[101] = '0';
+    tar_header[102] = '0';
+    tar_header[103] = '6';
+    tar_header[104] = '4';
+    tar_header[105] = '4';
+    tar_header[108] = '0';
+    tar_header[116] = '0';
+    char* p = tar_header + 124;
+    for(int i = 30; i >= 0; i -= 3)
+        *p++ = (data->size >> i) % 8 + '0';
+    tar_header[136] = '0';
+    for(int i = 0; i < 8; i++)
+        tar_header[148+i] = ' ';
+    tar_header[156] = '0';
+    uint16_t cksum = 0;
+    for(int i = 0; i < 512; i++)
+        cksum += (uint8_t)tar_header[i];
+    p = tar_header + 148;
+    for(int i = 15; i >= 0; i -= 3)
+        *p++ = (cksum >> i) % 8 + '0';
+    *p++ = 0;
+    writeall(sock, tar_header, 512);
+    writeall(sock, data->buf, (data->size + 511) & -512);
+    memfd_close(data);
+}
+
 void dump_dirents(struct my_dirent* dirents, int sock)
 {
     char* paths = (void*)dirents;
@@ -438,44 +499,15 @@ void dump_dirents(struct my_dirent* dirents, int sock)
         if(!ok)
             continue;
         struct memfd data = dump_elf(path);
-        char tar_header[512] = {0};
+        if(data.size == 0)
+            send_tar_entry(sock, &data, path, ".failed", (char*)0);
+        else
         {
-            size_t i;
-            for(i = 0; i < l && i < 99; i++)
-                tar_header[i] = path[i+1];
-            if(data.size == 0)
-            {
-                i--;
-                const char* src = ".failed";
-                for(size_t j = 0; src[j] && i < 99; i++, j++)
-                    tar_header[i] = src[j];
-            }
+            send_tar_entry(sock, &data, path, (char*)0);
+            struct memfd auth_info = dump_elf_auth_info(path);
+            if(auth_info.size != 0)
+                send_tar_entry(sock, &auth_info, path, ".auth_info", (char*)0);
         }
-        tar_header[100] = '1';
-        tar_header[101] = '0';
-        tar_header[102] = '0';
-        tar_header[103] = '6';
-        tar_header[104] = '4';
-        tar_header[105] = '4';
-        tar_header[108] = '0';
-        tar_header[116] = '0';
-        char* p = tar_header + 124;
-        for(int i = 30; i >= 0; i -= 3)
-            *p++ = (data.size >> i) % 8 + '0';
-        tar_header[136] = '0';
-        for(int i = 0; i < 8; i++)
-            tar_header[148+i] = ' ';
-        tar_header[156] = '0';
-        uint16_t cksum = 0;
-        for(int i = 0; i < 512; i++)
-            cksum += (uint8_t)tar_header[i];
-        p = tar_header + 148;
-        for(int i = 15; i >= 0; i -= 3)
-            *p++ = (cksum >> i) % 8 + '0';
-        *p++ = 0;
-        writeall(sock, tar_header, 512);
-        writeall(sock, data.buf, (data.size + 511) & -512);
-        memfd_close(&data);
     }
     char tar_end[1024] = {0};
     writeall(sock, tar_end, 1024);
