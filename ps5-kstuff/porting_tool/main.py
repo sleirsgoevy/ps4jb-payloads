@@ -1,4 +1,4 @@
-import sys, json, threading, functools, os.path
+import sys, json, threading, functools, os.path, collections
 
 if 'linux' not in sys.platform:
     print('This tool only supports GNU/Linux! Use Docker or WSL on other OSes.')
@@ -686,6 +686,57 @@ def mdbg_call_fix():
         k2 += 1
     assert trace1[k1].rip == trace2[k2].rip
     return trace1[k1].rip - kdata_base
+
+@derive_symbols(
+    'sceSblServiceMailbox',
+    'sceSblServiceMailbox_lr_verifyHeader',
+    'sceSblAuthMgrSmIsLoadable2',
+    'sceSblServiceMailbox_lr_loadSelfSegment',
+    'sceSblServiceMailbox_lr_decryptSelfBlock',
+)
+@retry_on_error
+def sceSblServiceMailbox():
+    # we need about 20 MB of log memory, allocate 64 MB just to be sure
+    use_r0gdb_trace(1<<26)
+    kdata_base = gdb.ieval('kdata_base')
+    # fill mmap_self offsets, 'coz we're tracing mmap_self for simplicity
+    gdb.ieval('offsets.mmap_self_fix_1_end = (offsets.mmap_self_fix_1_start = %s) + 2'%ostr(kdata_base+symbols['mmap_self_fix_1_start']))
+    gdb.ieval('offsets.mmap_self_fix_2_end = (offsets.mmap_self_fix_2_start = %s) + 2'%ostr(kdata_base+symbols['mmap_self_fix_2_start']))
+    # open some library
+    fd = gdb.ieval('(int)open("/system_ex/common_ex/lib/libSceNKWebKit.sprx", 0)')
+    assert fd >= 0
+    # now mmap and mlock first 64 KB of the first segment
+    trace = traces.Trace(
+        r0gdb.trace('fix_mmap_self', '(void*)dlsym(0x2001, "mmap")', 0, 65536, 1, 0x80001, fd, 0) +
+        r0gdb.trace('fix_mmap_self', '(void*)dlsym(0x2001, "mlock")', gdb.ieval('(void*)$rax'), 65536)
+    )
+    # filter callers for each function being called
+    lrs = collections.defaultdict(list)
+    for i in range(1, len(trace)):
+        if trace.is_jump(i-1) and trace[i].rsp == trace[i-1].rsp - 8:
+            lrs[trace[i].rip].append(trace[i-1].rip)
+    # expected callers for sceSblServiceMailbox:
+    # * sceSblAuthMgrSmFinalize (happens sometimes but not always)
+    # * verifyHeader
+    # * sceSblAuthMgrSmIsLoadable2
+    # * loadSelfSegment
+    # * decryptSelfBlock (4 times in a row)
+    candidates = [i for i, j in lrs.items() if len(j) in (7, 8) and len(set(j)) == len(j) - 3 and len(set(j[-4:])) == 1]
+    assert candidates
+    # the real mailbox call has rsi = rdx for all invocations. filter by that
+    mailbox = [i for i in candidates if all(j.rsi == j.rdx for j in trace if j.rip == i)]
+    assert len(mailbox) == 1
+    mailbox, = mailbox
+    verifyHeader, sceSblAuthMgrSmIsLoadable2, loadSelfSegment, decryptSelfBlock = lrs[mailbox][-7:-3]
+    # for sceSblAuthMgrSmIsLoadable2 we need the function start, not the mailbox callsite
+    sceSblAuthMgrSmIsLoadable2 = trace[trace.find_caller(trace.find_next_rip(0, sceSblAuthMgrSmIsLoadable2))+1].rip
+    return (
+        mailbox - kdata_base,
+        verifyHeader - kdata_base,
+        sceSblAuthMgrSmIsLoadable2 - kdata_base,
+        loadSelfSegment - kdata_base,
+        decryptSelfBlock - kdata_base,
+    )
 
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')
