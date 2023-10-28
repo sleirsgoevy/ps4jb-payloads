@@ -80,14 +80,6 @@ new_conn:
     }
 }
 
-static void copy_data(int fd1, int fd2)
-{
-    char buf[4096];
-    ssize_t chk;
-    while((chk = read(fd1, buf, sizeof(buf))) > 0)
-        write(fd2, buf, chk);
-}
-
 asm("my_nmount:\nmov $378, %rax\njmp *p_kekcall(%rip)");
 void* p_kekcall;
 int my_nmount(struct iovec* iov, size_t n, int flags);

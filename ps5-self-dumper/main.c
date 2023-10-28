@@ -513,12 +513,8 @@ void dump_dirents(struct my_dirent* dirents, int sock)
     writeall(sock, tar_end, 1024);
 }
 
-int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
+static void set_sigsegv_handler(void)
 {
-    r0gdb_init(ds, a, b, c, d);
-#ifdef DEBUG
-    dbg_enter();
-#endif
     struct sigaction sa = {
         .sa_sigaction = memcpy_segv_handler,
         .sa_flags = SA_SIGINFO,
@@ -526,6 +522,15 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     struct sigaction oldsa;
     sigaction(SIGSEGV, &sa, &oldsa);
     old_sigsegv_handler = oldsa.sa_sigaction;
+}
+
+int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
+{
+    r0gdb_init(ds, a, b, c, d);
+#ifdef DEBUG
+    dbg_enter();
+#endif
+    set_sigsegv_handler();
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if(sock < 0)
         return 1;

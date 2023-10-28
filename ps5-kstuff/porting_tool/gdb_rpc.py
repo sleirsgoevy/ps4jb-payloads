@@ -28,6 +28,7 @@ class GDB:
         self.payload_path = None
         self.r0gdb_cflags = None
         self.kstuff_cflags = None
+        self.self_dumper_flags = None
         self.popen = None
         threading.Thread(target=self._monitor, daemon=True).start()
     def bind_socket(self):
@@ -45,6 +46,7 @@ class GDB:
                 self.build('prosper0gdb', flags)
                 self.r0gdb_cflags = flags
                 self.kstuff_cflags = None
+                self.self_dumper_flags = None
             self.send_payload('prosper0gdb/payload.bin')
             self.connect_gdb()
             self.payload = 'r0gdb'
@@ -57,12 +59,29 @@ class GDB:
                 self.build('prosper0gdb', flags1)
                 self.r0gdb_cflags = flags1
                 self.kstuff_cflags = None
+                self.self_dumper_flags = None
             if self.kstuff_cflags != flags2:
                 self.build('ps5-kstuff', flags2)
                 self.kstuff_cflags = flags2
             self.send_payload('ps5-kstuff/payload-gdb.bin')
             self.connect_gdb()
             self.payload = 'kstuff'
+            return True
+        return False
+    def use_self_dumper(self, flags1=[], flags2=[]):
+        if self.popen == None or self.payload != 'self_dumper' or self.r0gdb_cflags != flags1 or self.self_dumper_flags != flags2:
+            self.kill()
+            if self.r0gdb_cflags != flags1:
+                self.build('prosper0gdb', flags1)
+                self.r0gdb_cflags = flags1
+                self.kstuff_cflags = None
+                self.self_dumper_flags = None
+            if self.self_dumper_flags != flags2:
+                self.build('ps5-self-dumper', flags2)
+                self.self_dumper_flags = flags2
+            self.send_payload('ps5-self-dumper/payload-gdb.bin')
+            self.connect_gdb()
+            self.payload = 'self_dumper'
             return True
         return False
     def build(self, payload, flags):
@@ -177,9 +196,9 @@ class GDB:
         self.popen = None
         self.stdio = None
 
-class BlobReceiver:
-    def __init__(self, gdb, ba, title):
-        self.ba = ba
+class SocketWorker:
+    def __init__(self, gdb, data, title):
+        self.data = self.prepare(data)
         self.sock, (self.host, self.port) = gdb.bind_socket()
         self.title = title
     def __enter__(self):
@@ -197,16 +216,35 @@ class BlobReceiver:
             print()
         finally:
             self.sock.__exit__(tp, err, tb)
+    def prepare(self, q):
+        return q
+    def op(self, sock):
+        ...
     def run(self):
         with self.sock.accept()[0] as sock:
+            total = 0
             while True:
-                q = sock.recv(4096)
-                self.ba += q
+                q = self.op(sock)
                 if not q: break
-                s = str(len(self.ba))
+                total += q
+                s = str(total)
                 s += '\b'*len(s)
                 sys.stdout.write(s)
                 sys.stdout.flush()
+
+class BlobReceiver(SocketWorker):
+    def op(self, sock):
+        q = sock.recv(4096)
+        self.data += q
+        return len(q)
+
+class BlobSender(SocketWorker):
+    def prepare(self, data):
+        return memoryview(data)
+    def op(self, sock):
+        q = sock.send(self.data[:65536])
+        self.data = self.data[q:]
+        return q
 
 class R0GDB:
     def __init__(self, gdb, cflags=[]):

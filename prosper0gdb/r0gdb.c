@@ -544,26 +544,44 @@ int r0gdb_open_socket(const char* ipaddr, int port)
     return sock;
 }
 
+int r0gdb_sendall(int sock, const void* data, size_t sz)
+{
+    const char* p = (const char*)data;
+    while(sz)
+    {
+        ssize_t chk = write(sock, p, sz);
+        if(chk <= 0)
+            return -1;
+        p += chk;
+        sz -= chk;
+    }
+    return 0;
+}
+
+int r0gdb_sendfile(int fd1, int fd2)
+{
+    char buf[4096];
+    ssize_t chk;
+    while((chk = read(fd1, buf, sizeof(buf))) > 0)
+    {
+        ssize_t chk2;
+        size_t offset = 0;
+        while((chk2 = write(fd2, buf+offset, chk-offset)) > 0)
+            offset += chk2;
+        if(offset != chk)
+            return -1;
+    }
+    return 0;
+}
+
 int r0gdb_trace_send(const char* ipaddr, int port)
 {
     int sock = r0gdb_open_socket(ipaddr, port);
     if(sock < 0)
         return -1;
-    char* p = (char*)trace_base;
-    size_t sz = trace_start - trace_base;
-    while(sz)
-    {
-        ssize_t chk = write(sock, p, sz);
-        if(chk <= 0)
-        {
-            close(sock);
-            return -1;
-        }
-        p += chk;
-        sz -= chk;
-    }
+    int ans = r0gdb_sendall(sock, (void*)trace_base, trace_start - trace_base);
     close(sock);
-    return 0;
+    return ans;
 }
 
 static void clear_tf(int sig, siginfo_t* s, void* o_uc)

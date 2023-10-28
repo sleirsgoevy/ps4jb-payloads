@@ -1,4 +1,4 @@
-import sys, json, threading, functools, os.path, collections
+import sys, json, threading, functools, os.path, collections, tarfile, io
 
 if 'linux' not in sys.platform:
     print('This tool only supports GNU/Linux! Use Docker or WSL on other OSes.')
@@ -31,6 +31,7 @@ if 'allproc' not in symbols:
     die('`allproc` is not defined')
 
 R0GDB_FLAGS = ['-DMEMRW_FALLBACK', '-DNO_BUILTIN_OFFSETS']
+SELF_DUMPER_FLAGS = ['-DMEMRW_FALLBACK']
 
 r0gdb = gdb_rpc.R0GDB(gdb, R0GDB_FLAGS)
 
@@ -41,9 +42,14 @@ def retry_on_error(f):
     @functools.wraps(f)
     def f1(*args):
         while True:
-            try: return f(*args)
+            try: ans = f(*args)
             except gdb_rpc.DisconnectedException:
                 print('\nPS5 disconnected, retrying %s...'%f.__name__)
+                continue
+            if ans == None or (isinstance(ans, tuple) and None in ans):
+                print('\nfailed to find some offsets related to %s, retrying...'%f.__name__)
+                continue
+            return ans
     return f1
 
 derivations = []
@@ -78,12 +84,14 @@ def dump_kernel():
         while total_sent < (134 << 20):
             chk0 = gdb.ieval('copyout(%d, %d, %d)'%(remote_buf, kdata_base+total_sent, min(1048576, (134 << 20) - total_sent)))
             if chk0 <= 0: break
-            offset = 0
-            while offset < chk0:
-                chk = gdb.ieval('(int)write(%d, %d, %d)'%(remote_fd, remote_buf+offset, chk0-offset))
-                assert chk > 0
-                offset += chk
-                total_sent += chk
+            assert not gdb.ieval('r0gdb_sendall(%d, %d, %d)'%(remote_fd, remote_buf, chk0))
+            total_sent += chk0
+            #offset = 0
+            #while offset < chk0:
+            #    chk = gdb.ieval('(int)write(%d, %d, %d)'%(remote_fd, remote_buf+offset, chk0-offset))
+            #    assert chk > 0
+            #    offset += chk
+            #    total_sent += chk
         # this loop is to detect panics while dumping
         while len(local_buf) != total_sent:
             gdb.eval('(int)nanosleep(%d)'%one_second)
@@ -365,6 +373,15 @@ def do_use_r0gdb_trace():
         gdb.ieval('offsets.cpu_switch = '+ostr(kdata_base+symbols['cpu_switch']))
 
 use_r0gdb_trace = r0gdb.use_trace_fn(do_use_r0gdb_trace)
+
+def use_self_dumper():
+    if gdb.use_self_dumper(R0GDB_FLAGS, SELF_DUMPER_FLAGS):
+        do_use_r0gdb_trace()
+        kdata_base = gdb.ieval('kdata_base')
+        gdb.ieval('offsets.mmap_self_fix_1_end = (offsets.mmap_self_fix_1_start = %s) + 2'%ostr(kdata_base + symbols['mmap_self_fix_1_start']))
+        gdb.ieval('offsets.mmap_self_fix_2_end = (offsets.mmap_self_fix_2_start = %s) + 2'%ostr(kdata_base + symbols['mmap_self_fix_2_start']))
+        gdb.ieval('offsets.sceSblAuthMgrSmIsLoadable2 = '+ostr(kdata_base + symbols['sceSblAuthMgrSmIsLoadable2']))
+        assert 'void' == gdb.eval('set_sigsegv_handler()')
 
 @derive_symbol
 @retry_on_error
@@ -689,6 +706,7 @@ def mdbg_call_fix():
 
 @derive_symbols(
     'sceSblServiceMailbox',
+    'sceSblServiceMailbox_lr_sceSblAuthMgrSmFinalize',
     'sceSblServiceMailbox_lr_verifyHeader',
     'sceSblAuthMgrSmIsLoadable2',
     'sceSblServiceMailbox_lr_loadSelfSegment',
@@ -727,16 +745,60 @@ def sceSblServiceMailbox():
     mailbox = [i for i in candidates if all(j.rsi == j.rdx for j in trace if j.rip == i)]
     assert len(mailbox) == 1
     mailbox, = mailbox
-    verifyHeader, sceSblAuthMgrSmIsLoadable2, loadSelfSegment, decryptSelfBlock = lrs[mailbox][-7:-3]
+    lrs = lrs[mailbox]
+    verifyHeader, sceSblAuthMgrSmIsLoadable2, loadSelfSegment, decryptSelfBlock = lrs[-7:-3]
     # for sceSblAuthMgrSmIsLoadable2 we need the function start, not the mailbox callsite
     sceSblAuthMgrSmIsLoadable2 = trace[trace.find_caller(trace.find_next_rip(0, sceSblAuthMgrSmIsLoadable2))+1].rip
     return (
         mailbox - kdata_base,
-        verifyHeader - kdata_base,
+        lrs[0] + 5 - kdata_base if len(lrs) == 8 else None,
+        verifyHeader + 5 - kdata_base,
         sceSblAuthMgrSmIsLoadable2 - kdata_base,
-        loadSelfSegment - kdata_base,
-        decryptSelfBlock - kdata_base,
+        loadSelfSegment + 5 - kdata_base,
+        decryptSelfBlock + 5 - kdata_base,
     )
+
+def run_make_fself(elf_data, auth_info):
+    import make_fself
+    elf = make_fself.ElfFile(ignore_shdrs=True)
+    elf.load(io.BytesIO(elf_data))
+    self = make_fself.SignedElfFile(elf, paid=int.from_bytes(auth_info[:8], 'little'), ptype=1, app_version=0, fw_version=0, auth_info=auth_info)
+    self_file = io.BytesIO()
+    self.save(self_file)
+    return self_file.getvalue()
+
+def make_fself_and_upload(name, path):
+    full_name = name
+    name = name.split('.', 1)[0]
+    fd = gdb.ieval('(int)open("/data/%s", 0)'%full_name)
+    if fd >= 0:
+        assert not gdb.ieval('(int)close(%d)'%fd)
+        return
+    use_self_dumper()
+    assert not gdb.ieval('($self_file_%s = &*(struct memfd[1]){dump_elf("%s")}, 0)'%(name, path))
+    assert not gdb.ieval('($self_auth_info_%s = &*(struct memfd[1]){dump_elf_auth_info("%s")}, 0)'%(name, path))
+    ba = bytearray()
+    with gdb_rpc.BlobReceiver(gdb, ba, 'retrieving dumped files') as addr:
+        remote_fd = gdb.ieval('r0gdb_open_socket("%s", %d)'%addr)
+        assert remote_fd >= 0
+        assert gdb.eval('send_tar_entry(%d, $self_file_%s, "binary.elf", (char*)0)'%(remote_fd, name))
+        assert gdb.eval('send_tar_entry(%d, $self_auth_info_%s, "binary.elf.auth_info", (char*)0)'%(remote_fd, name))
+        assert not gdb.ieval('r0gdb_sendall(%d, malloc(512), 512)'%remote_fd)
+        gdb.ieval('(int)close(%d)'%remote_fd)
+    files = {}
+    for i in tarfile.open(fileobj=io.BytesIO(bytes(ba))):
+        files[i.name] = ba[i.offset_data:i.offset_data+i.size]
+    elf_data = files['binary.elf']
+    auth_info = files['binary.elf.auth_info']
+    assert elf_data and len(auth_info) == 0x88
+    self_data = run_make_fself(elf_data, auth_info)
+    with gdb_rpc.BlobSender(gdb, self_data, 'writing fself file to /data/%s'%full_name) as addr:
+        remote_fd = gdb.ieval('r0gdb_open_socket("%s", %d)'%addr)
+        assert remote_fd >= 0
+        file_fd = gdb.ieval('(int)open("/data/%s", 0x602, 0777)'%full_name)
+        assert file_fd >= 0
+        assert not gdb.ieval('r0gdb_sendfile(%d, %d)'%(remote_fd, file_fd))
+        assert not gdb.ieval('(int)close(%d) | (int)close(%d)'%(remote_fd, file_fd))
 
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')

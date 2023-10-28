@@ -50,6 +50,8 @@ void r0gdb_write_cr3(uint64_t value);
 
 //netcat captured trace to specified ip & port
 int r0gdb_open_socket(const char* ipaddr, int port);
+int r0gdb_sendall(int sock, const void* data, size_t sz);
+int r0gdb_sendfile(int fd1, int fd2);
 int r0gdb_trace_send(const char* ipaddr, int port);
 
 //clear captured trace
