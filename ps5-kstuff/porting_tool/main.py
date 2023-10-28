@@ -800,6 +800,58 @@ def make_fself_and_upload(name, path):
         assert not gdb.ieval('r0gdb_sendfile(%d, %d)'%(remote_fd, file_fd))
         assert not gdb.ieval('(int)close(%d) | (int)close(%d)'%(remote_fd, file_fd))
 
+def ensure_fselfs(fn):
+    if gdb.popen == None:
+        fn()
+    make_fself_and_upload('libSceLibcInternal.sprx', '/system/common/lib/libSceLibcInternal.sprx')
+    make_fself_and_upload('libScePlayerInvitationDialog.sprx', '/system/common/lib/libScePlayerInvitationDialog.sprx')
+    fn()
+
+@derive_symbol
+def sceSblServiceMailbox_lr_decryptMultipleSelfBlocks():
+    ensure_fselfs(lambda: use_r0gdb_trace(0))
+    # set mailbox-related symbols
+    kdata_base = gdb.ieval('kdata_base')
+    for i in (
+        'sceSblServiceMailbox',
+        'sceSblServiceMailbox_lr_sceSblAuthMgrSmFinalize',
+        'sceSblServiceMailbox_lr_verifyHeader',
+        'sceSblAuthMgrSmIsLoadable2',
+        'sceSblServiceMailbox_lr_loadSelfSegment',
+        'sceSblServiceMailbox_lr_decryptSelfBlock',
+        'mini_syscore_header',
+    ):
+        gdb.ieval('offsets.%s = %s'%(i, ostr(kdata_base + symbols[i])))
+    gdb.ieval('offsets.mmap_self_fix_1_end = (offsets.mmap_self_fix_1_start = %s) + 2'%ostr(kdata_base + symbols['mmap_self_fix_1_start']))
+    gdb.ieval('offsets.mmap_self_fix_2_end = (offsets.mmap_self_fix_2_start = %s) + 2'%ostr(kdata_base + symbols['mmap_self_fix_2_start']))
+    #buf = gdb.ieval('malloc(1)')
+    #n = 72
+    #gdb.ieval('(uint64_t)({void*[%d]}%d = {void*[%d]}&offsets)'%(n, buf, n))
+    #gdb.eval('set_offsets_403()')
+    #gdb.ieval('(uint64_t)({void*[%d]}&offsets = {void*[%d]}%d)'%(n, n, buf))
+    # map 64k of a fake self
+    gdb.ieval('do_fself = 31')
+    r0gdb.do_trace('trace_mailbox', '(void*)dlsym(0x2001, "mmap")', 0, 65536, 1, 0x80001, '(int)open("/data/libSceLibcInternal.sprx", 0)', 0)
+    assert not (gdb.ieval('$eflags') & 1), gdb.ieval('$rax')
+    # the latter check will hang. arm a SIGALRM to interrupt us, 'coz sending ^C will break the python repl
+    gdb.execute('handle SIGALRM print stop nopass')
+    buf = gdb.ieval('malloc(sizeof(struct sigaction))')
+    assert not gdb.ieval('(int)sigaction(2, 0, %s)'%ostr(buf))
+    assert not gdb.ieval('(int)sigaction(14, %s, 0)'%ostr(buf))
+    assert not gdb.ieval('((int(*)(void))dlsym(2, "alarm"))(10)')
+    # try to mlock it in one go. decryptMultipleSelfBlocks should get called
+    gdb.ieval('do_fself = 63')
+    r0gdb.do_trace('trace_mailbox', '(void*)dlsym(0x2001, "mlock")', '$rax', 65536)
+    # check that the syscall hasn't completed normally
+    assert not gdb.ieval('$pc == (void*)dlsym(0x2001, "mlock") + 12')
+    # now get its lr
+    lr = gdb.ieval('mailbox_lr[0]')
+    assert lr and not gdb.ieval('mailbox_lr[1]')
+    # the process is now fucked. panic now
+    try: gdb.eval('{short}(get_thread()+14) = 0xdeb7')
+    except gdb_rpc.DisconnectedException: pass
+    return lr - kdata_base
+
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')
 
