@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/mman.h>
+#include "uelf/parasite_desc.h"
 
 void kkfncall(void* td, uintptr_t** uap)
 {
@@ -65,7 +66,7 @@ uint64_t r0gdb_read_cr3(void)
     return cr3;
 }
 
-#define NCPUS 3
+#define NCPUS 16
 #define IDT 0xffffffff81d7d540
 #define GDT(i) (0xffffffff81e2a7d0+0x68*(i))
 #define TSS(i) (0xffffffff81e23f90+0x68*(i))
@@ -249,6 +250,13 @@ void build_uelf_cr3(uint64_t uelf_cr3, void* uelf_base[2])
         copyin(pml3_dmap+8*i, &(uint64_t[1]){(i<<30) | 135}, 8);
 }
 
+static struct PARASITES(0) parasites_freebsd = {
+    .lim_syscall = 0,
+    .lim_fself = 0,
+    .lim_total = 0,
+    .parasites = {},
+};
+
 int main()
 {
     mlock(kek, kek_end-kek);
@@ -259,10 +267,15 @@ int main()
     uint64_t int13_handler;
     copyout(&int13_handler, IDT+16*13, 2);
     copyout((char*)&int13_handler + 2, IDT+16*13+6, 6);
+    void* parasites = kmalloc(sizeof(parasites_freebsd));
+    kmemcpy(parasites, &parasites_freebsd, sizeof(parasites_freebsd));
+    uint64_t parasites_phys = virt2phys((uint64_t)parasites);
+    uint64_t parasites_dmem = (1ull<<39) + parasites_phys;
     const char* symbols[] = {
         "add_rsp_iret",
         "copyin",
         "copyout",
+        "dmem",
         "doreti_iret",
         "dr2gpr_start",
         "gpr2dr_1_start",
@@ -276,6 +289,7 @@ int main()
         "mov_cr3_rax",
         "mov_rdi_cr3",
         "nop_ret",
+        "parasites",
         ".pcpu",
         "pop_all_iret",
         "push_pop_all_iret",
@@ -295,6 +309,7 @@ int main()
         0xffffffff80f8568d, // add_rsp_iret
         0xffffffff80f9e880, // copyin
         0xffffffff80f9e800, // copyout
+        1ull << 39,         // dmem
         0xffffffff80f85695, // doreti_iret
         0xffffffff80f837a8, // dr2gpr_start
         0xffffffff80f8381e, // gpr2dr_1_start
@@ -308,6 +323,7 @@ int main()
         0xffffffff80f82d87, // mov_cr3_rax
         0xffffffff80cc27ed, // mov_rdi_cr3
         0xffffffff802ff132, // nop_ret
+        parasites_dmem,     // parasites
         0x1234,             // .pcpu
         0xffffffff80f85636, // pop_all_iret
         0xffffffff80f84f80, // push_pop_all_iret

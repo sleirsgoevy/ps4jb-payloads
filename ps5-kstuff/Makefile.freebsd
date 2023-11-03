@@ -19,7 +19,7 @@ uelf/crt.o: uelf/crt.asm
 	yasm uelf/crt.asm -f elf64 -o uelf/crt.o
 
 uelf/uelf: uelf/*.c uelf/*.h structs.h uelf/crt.o
-	gcc -Wl,-zmax-page-size=4096 -Wl,-Bsymbolic -Wl,-gc-sections -ffunction-sections -fdata-sections -O0 -g -DFREEBSD -std=gnu11 -nostdlib -fno-stack-protector -fPIE -fPIC -shared -ffreestanding -fno-builtin uelf/crt.o uelf/*.c -o uelf/uelf
+	gcc -Wl,-zmax-page-size=4096 -Wl,-Bsymbolic -Wl,--gc-sections -ffunction-sections -fdata-sections -O0 -g -DFREEBSD -std=gnu11 -nostdlib -fno-stack-protector -fPIE -fPIC -shared -fvisibility=hidden -ffreestanding -fno-builtin uelf/crt.o uelf/*.c -o uelf/uelf
 
 freebsd-loader: uelf/uelf kelf freebsd-loader.c
 	gcc -O0 -g -std=gnu11 freebsd-loader.c -mno-red-zone -o freebsd-loader

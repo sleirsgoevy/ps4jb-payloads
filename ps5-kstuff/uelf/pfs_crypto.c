@@ -1,7 +1,9 @@
+#ifndef FREEBSD
 #include <stdint.h>
 #include <stddef.h>
 #include "pfs_crypto.h"
 #include "utils.h"
+
 #include "../BearSSL/inc/bearssl.h"
 #include "../libtomcrypt/src/headers/tomcrypt.h"
 
@@ -103,3 +105,4 @@ int pfs_xts_virtual(uint64_t dst, uint64_t src, const uint8_t* key, uint64_t sta
     xts_done(&xts);
     return 0;
 }
+#endif

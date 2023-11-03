@@ -19,9 +19,13 @@
 %define iret_rsp (iret_rip+24)
 %define iret_ss (iret_rip+32)
 
+%define td_proc 8
 %define td_pcb 0x3a8
 %define td_retval 0x3b8
 
+%define p_pid 0xbc
+
+%define pcb_fsbase 0x40
 %define pcb_gsbase 0x48
 %define pcb_flags 0xc8
 
