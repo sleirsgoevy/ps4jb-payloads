@@ -398,6 +398,22 @@ static struct shellcore_patch shellcore_patches_450[] = {
     {0x1a0fe5, "\xe9\xe7\x02\x00\x00", 5}, //jmp 0x1a12d1
 };
 
+static struct shellcore_patch shellcore_patches_451[] = {
+    {0x97596e, "\x52\xeb\x08\x66\x90", 5}, //push rdx; jmp 0x975979; 2-byte nop
+    {0x975979, "\xe8\xd2\xfb\xff\xff\x58\xc3", 7}, //call 0x975550; pop rax; ret
+    {0x975541, "\x31\xc0\x50\xeb\xe3", 5}, //xor eax, eax; push rax; jmp 0x975529
+    {0x975529, "\xe8\x22\x00\x00\x00\x58\xc3", 7}, //call 0x975550; pop rax; ret
+    {0x530f52, "\xeb\x04", 2}, //jmp 0x530f58
+    {0x26fa8c, "\xeb\x04", 2}, //jmp 0x26fa16
+    {0x54eb70, "\xeb", 1}, //jmp (destination unchanged)
+    {0x5376cd, "\x90\xe9", 2}, //nop; jmp (destination unchanged)
+    {0x54e50f, "\xeb", 1}, //jmp (destination unchanged)
+    {0x551cfa, "\xc8\x00\x00\x00", 4}, //(jmp opcode unchanged) 0x551dc6
+    {0x1a12d1, "\xe8\x0a\x89\x47\x00\x31\xc9\xff\xc1\xe9\xf4\x02\x00\x00", 14}, //call 0x619be0; xor ecx, ecx; inc ecx; jmp 0x1a15d3
+    {0x1a15d3, "\x83\xf8\x02\x0f\x43\xc1\xe9\x29\xfa\xff\xff", 11}, //cmp eax, 2; cmovae eax, ecx; jmp 0x1a1007
+    {0x1a0fe5, "\xe9\xe7\x02\x00\x00", 5}, //jmp 0x1a12d1
+};
+
 extern char _start[];
 
 static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches, uint64_t* eh_frame_offset)
@@ -417,6 +433,7 @@ static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches, ui
     {
     FW(403, 0x13c0000);
     FW(450, 0x13cc000);
+    FW(451, 0x13cc000);
     default:
         *n_patches = 1;
         return 0;
@@ -500,6 +517,30 @@ static struct PARASITES(13) parasites_450 = {
     }
 };
 
+static struct PARASITES(13) parasites_451 = {
+    .lim_syscall = 3,
+    .lim_fself = 11,
+    .lim_total = 13,
+    .parasites = {
+        /* syscall parasites */
+        {-0x80281d, RDI},
+        {-0x3884bc, RSI},
+        {-0x38847c, RSI},
+        /* fself parasites */
+        {-0x2cc1c6, RAX},
+        {-0x2ccd3a, RAX},
+        {-0x2ccc00, RAX},
+        {-0x2cc923, RAX},
+        {-0x2cc6ad, RAX},
+        {-0x2cc332, RCX},
+        {-0x990b10, RDI},
+        {-0x2cc7e6, R10},
+        /* unsorted parasites */
+        {-0x47953e, RAX},
+        {-0x47953e, R15},
+    }
+};
+
 static struct parasite_desc* get_parasites(size_t* desc_size)
 {
     int(*sceKernelGetProsperoSystemSwVersion)(uint32_t*) = dlsym((void*)0x2001, "sceKernelGetProsperoSystemSwVersion");
@@ -514,6 +555,9 @@ static struct parasite_desc* get_parasites(size_t* desc_size)
     case 0x450:
         *desc_size = sizeof(parasites_450);
         return (void*)&parasites_450;
+    case 0x451:
+        *desc_size = sizeof(parasites_451);
+        return (void*)&parasites_451;
     default: return 0;
     }
 }
