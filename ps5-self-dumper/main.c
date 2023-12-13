@@ -493,7 +493,7 @@ void dump_dirents(struct my_dirent* dirents, int sock)
             size_t k = l - l2;
             ok = 1;
             for(size_t j = 0; j < l2 && ok; j++)
-                if(path[k+j] != suffixes[i][j])
+                if ((path[k+j] | 32) != suffixes[i][j])
                     ok = 0;
         }
         if(!ok)
