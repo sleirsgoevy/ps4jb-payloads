@@ -934,7 +934,7 @@ def syscall_parasites():
     return ans
 
 @derive_symbols('loadSelfSegment_watchpoint', 'loadSelfSegment_epilogue', 'loadSelfSegment_watchpoint_lr', 'decryptSelfBlock_epilogue', 'decryptSelfBlock_watchpoint_lr', 'decryptMultipleSelfBlocks_epilogue', 'decryptMultipleSelfBlocks_watchpoint_lr')
-#@retry_on_error
+@retry_on_error
 def loadSelfSegment_watchpoint():
     ensure_fselfs(lambda: use_r0gdb_trace(1<<26))
     kdata_base = gdb.ieval('kdata_base')
