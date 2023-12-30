@@ -69,7 +69,6 @@ extern char sceSblServiceMailbox_lr_decryptMultipleSelfBlocks[];
 extern char loadSelfSegment_watchpoint[];
 extern char loadSelfSegment_watchpoint_lr[];
 extern char loadSelfSegment_epilogue[];
-extern char decryptSelfBlock_watchpoint[];
 extern char decryptSelfBlock_watchpoint_lr[];
 extern char decryptSelfBlock_epilogue[];
 extern char decryptMultipleSelfBlocks_watchpoint_lr[];
@@ -93,9 +92,22 @@ static void unset_dbgregs_for_watchpoint(uint64_t* regs)
     write_dbgregs(dbgregs);
 }
 
+#ifdef FIRMWARE_PORTING
+extern char mmap_self_fix_1_start[];
+extern char mmap_self_fix_2_start[];
+extern char mmap_self_fix_1_end[];
+extern char mmap_self_fix_2_end[];
+#endif
+
 static uint64_t dbgregs_for_fself[6] = {
-    (uint64_t)sceSblServiceMailbox, (uint64_t)sceSblAuthMgrSmIsLoadable2, 0, 0,
-    0, 0x405,
+    (uint64_t)sceSblServiceMailbox, (uint64_t)sceSblAuthMgrSmIsLoadable2,
+#ifdef FIRMWARE_PORTING
+    (uint64_t)mmap_self_fix_1_start, (uint64_t)mmap_self_fix_2_start,
+    0, 0x455,
+#else
+    0, 0,
+    0, 0x455,
+#endif
 };
 
 static uint64_t dbgregs_for_loadSelfSegment[6] = {
@@ -240,13 +252,7 @@ int try_handle_fself_trap(uint64_t* regs)
         copy_from_kernel(frame, regs[RSP], sizeof(frame));
         if(frame[3] == (uint64_t)loadSelfSegment_watchpoint_lr)
             set_dbgregs_for_watchpoint(regs, dbgregs_for_loadSelfSegment, sizeof(frame));
-    }
-    else if(regs[RIP] == (uint64_t)decryptSelfBlock_watchpoint)
-    {
-        regs[RDX] |= 0xffffull << 48;
-        uint64_t frame[4];
-        copy_from_kernel(frame, regs[RSP], sizeof(frame));
-        if(frame[3] == (uint64_t)decryptSelfBlock_watchpoint_lr)
+        else if(frame[3] == (uint64_t)decryptSelfBlock_watchpoint_lr)
             set_dbgregs_for_watchpoint(regs, dbgregs_for_decryptSelfBlock, sizeof(frame));
         else if(frame[3] == (uint64_t)decryptMultipleSelfBlocks_watchpoint_lr)
             set_dbgregs_for_watchpoint(regs, dbgregs_for_decryptMultipleSelfBlocks, sizeof(frame));
@@ -255,6 +261,12 @@ int try_handle_fself_trap(uint64_t* regs)
          || regs[RIP] == (uint64_t)decryptSelfBlock_epilogue
          || regs[RIP] == (uint64_t)decryptMultipleSelfBlocks_epilogue)
          unset_dbgregs_for_watchpoint(regs);
+#ifdef FIRMWARE_PORTING
+    else if(regs[RIP] == (uint64_t)mmap_self_fix_1_start)
+        regs[RIP] = (uint64_t)mmap_self_fix_1_end;
+    else if(regs[RIP] == (uint64_t)mmap_self_fix_2_start)
+        regs[RIP] = (uint64_t)mmap_self_fix_2_end;
+#endif
     else
         return 0;
     return 1;

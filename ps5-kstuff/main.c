@@ -569,6 +569,7 @@ static struct parasite_desc* get_parasites(size_t* desc_size)
         return 0;
 #else
     default:
+        *desc_size = sizeof(parasites_empty);
         return (void*)&parasites_empty;
 #endif
     }
@@ -774,12 +775,16 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     struct sigaction sa;
     sigaction(SIGBUS, 0, &sa);
     sigaction(SIGTRAP, &sa, 0);
+#ifndef FIRMWARE_PORTING
     sigaction(SIGPIPE, &sa, 0);
+#endif
     copyin(IDT+16*9+5, "\x8e", 1);
     copyin(IDT+16*179+5, "\x8e", 1);
     patch_shellcore(shellcore_patches, n_shellcore_patches, shellcore_eh_frame_offset);
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\npatching app.db... ", (uintptr_t)24);
+#ifndef FIRMWARE_PORTING
     patch_app_db();
+#endif
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
 #ifndef DEBUG
     notify("ps5-kstuff successfully loaded");

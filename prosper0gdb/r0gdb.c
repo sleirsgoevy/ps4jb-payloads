@@ -1148,7 +1148,6 @@ static void very_kek(uint64_t* regs)
         kekv2 = restore[1];
         regs[3] += 16;
     }
-#endif
     if(regs[0] == offsets.decryptSelfBlock_watchpoint)
     {
         uint64_t backup[10];
@@ -1168,6 +1167,7 @@ static void very_kek(uint64_t* regs)
             kek3 += 1;
         }
     }
+#endif
     if(regs[0] == offsets.decryptSelfBlock_epilogue)
     {
         uint64_t restore[6];

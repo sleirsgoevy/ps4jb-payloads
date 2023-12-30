@@ -55,7 +55,12 @@ void handle_syscall(uint64_t* regs, int allow_kekcall)
          || IS(dynlib_load_prx)
          || IS(get_self_auth_info)
          || IS(get_sdk_compiled_version)
-         || IS_PPR(get_ppr_sdk_compiled_version))
+         || IS_PPR(get_ppr_sdk_compiled_version)
+#ifdef FIRMWARE_PORTING
+         || IS_PPR(mmap)
+         || IS_PPR(mlock)
+#endif
+    )
         handle_fself_syscall(regs);
     else if(IS(nmount)
          || IS(unmount))

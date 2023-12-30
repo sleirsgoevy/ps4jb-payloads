@@ -392,13 +392,30 @@ def use_kstuff():
         gdb.kill()
     do_use_r0gdb_raw()
     kdata_base = gdb.ieval('kdata_base')
+    syscall_parasites = symbols['syscall_parasites'] if 'syscall_parasites' in available_symbols else []
+    fself_parasites = symbols['fself_parasites'] if 'fself_parasites' in available_symbols else []
+    unsorted_parasites = symbols['unsorted_parasites'] if 'unsorted_parasites' in available_symbols else []
     for k in available_symbols:
         if k != 'pmap_activate_sw' and not k.endswith('_parasites'):
             gdb.ieval('offsets.%s = %s'%(k, ostr(kdata_base + symbols[k])))
     gdb.ieval('offsets.nop_ret = '+ostr(kdata_base + symbols['wrmsr_ret'] + 2))
     gdb.ieval('offsets.justreturn_pop = '+ostr(kdata_base + symbols['justreturn'] + 8))
+    gdb.ieval('offsets.mmap_self_fix_1_end = offsets.mmap_self_fix_1_start + 2')
+    gdb.ieval('offsets.mmap_self_fix_2_end = offsets.mmap_self_fix_2_start + 2')
+    parasites = syscall_parasites + fself_parasites + unsorted_parasites
+    assert len(parasites) <= 100
+    gdb.ieval('parasites_empty.lim_syscall = %d'%(len(syscall_parasites)))
+    gdb.ieval('parasites_empty.lim_fself = %d'%(len(syscall_parasites) + len(fself_parasites)))
+    gdb.ieval('parasites_empty.lim_total = %d'%(len(parasites)))
+    regs = [7, 6, 2, 1, 8, 9, 0, 3, 5, 10, 11, 12, 13, 14, 15, None, None, None, 4]
+    for i, (addr, reg) in enumerate(parasites):
+        assert reg in range(16)
+        gdb.ieval('(parasites_empty.parasites[%d].address = %d, parasites_empty.parasites[%d].reg = %d)'%(i, addr, i, regs.index(reg)))
+
+def init_kstuff():
     assert 'void' == gdb.eval('kill_thread()')
     assert 'void' == gdb.eval('ignore_signals()')
+    gdb.execute('cont')
 
 @derive_symbol
 @retry_on_error
@@ -792,7 +809,7 @@ def make_fself_and_upload(name, path):
     fd = gdb.ieval('(int)open("/data/%s", 0)'%full_name)
     if fd >= 0:
         assert not gdb.ieval('(int)close(%d)'%fd)
-        return
+        return True
     use_self_dumper()
     assert not gdb.ieval('($self_file_%s = &*(struct memfd[1]){dump_elf("%s")}, 0)'%(name, path))
     assert not gdb.ieval('($self_auth_info_%s = &*(struct memfd[1]){dump_elf_auth_info("%s")}, 0)'%(name, path))
@@ -818,13 +835,16 @@ def make_fself_and_upload(name, path):
         assert file_fd >= 0
         assert not gdb.ieval('r0gdb_sendfile(%d, %d)'%(remote_fd, file_fd))
         assert not gdb.ieval('(int)close(%d) | (int)close(%d)'%(remote_fd, file_fd))
+    return False
 
 def ensure_fselfs(fn):
     if gdb.popen == None:
         fn()
-    make_fself_and_upload('libSceLibcInternal.sprx', '/system/common/lib/libSceLibcInternal.sprx')
-    make_fself_and_upload('libScePlayerInvitationDialog.sprx', '/system/common/lib/libScePlayerInvitationDialog.sprx')
-    fn()
+        fn_run = True
+    if (not make_fself_and_upload('libSceLibcInternal.sprx', '/system/common/lib/libSceLibcInternal.sprx')
+        or not make_fself_and_upload('libScePlayerInvitationDialog.sprx', '/system/common/lib/libScePlayerInvitationDialog.sprx')
+        or not fn_run):
+        fn()
 
 @derive_symbol
 @retry_on_error
@@ -882,7 +902,6 @@ def copyin():
     fd1 = gdb.ieval('{int}%d'%pipebuf)
     fd2 = gdb.ieval('{int}%d'%(pipebuf+4))
     gdb.ieval('jprog = (void*[1]){0}')
-    global trace1, trace2
     trace1 = traces.Trace(r0gdb.trace('do_jprog', '(void*)dlsym(0x2001, "_write")', fd2, pipebuf, 123))
     trace2 = traces.Trace(r0gdb.trace('do_jprog', '(void*)dlsym(0x2001, "_read")', fd1, pipebuf, 123))
     candidates1 = [i for i in range(1, len(trace1)) if trace1.is_jump(i-1) and trace1[i].rsp == trace1[i-1].rsp - 8 and trace1[i].rdi == pipebuf and trace1[i].rdx == 123]
@@ -901,13 +920,76 @@ def fetch_logs(cpu):
     gdb.execute('set print repeats 0')
     return [int(i, 16) for i in gdb.eval('{void*[512]}%d'%(uelf_base+offset)).strip()[1:-1].split(', ')]
 
+def get_parasites(kdata_base):
+    return sorted({(i - kdata_base, j) for k in map(fetch_logs, range(16)) for i, j in zip(k[::2], k[1::2]) if i})
+
 @derive_symbol
 @retry_on_error
 def syscall_parasites():
     use_kstuff()
-    gdb.execute('cont')
+    init_kstuff()
     kdata_base = gdb.ieval('kdata_base')
-    return sorted({(i - kdata_base, j) for k in map(fetch_logs, range(16)) for i, j in zip(k[::2], k[1::2]) if i})
+    ans = get_parasites(kdata_base)
+    assert len(ans) == 3
+    return ans
+
+@derive_symbols('loadSelfSegment_watchpoint', 'loadSelfSegment_epilogue', 'loadSelfSegment_watchpoint_lr', 'decryptSelfBlock_epilogue', 'decryptSelfBlock_watchpoint_lr', 'decryptMultipleSelfBlocks_epilogue', 'decryptMultipleSelfBlocks_watchpoint_lr')
+#@retry_on_error
+def loadSelfSegment_watchpoint():
+    ensure_fselfs(lambda: use_r0gdb_trace(1<<26))
+    kdata_base = gdb.ieval('kdata_base')
+    for i in (
+        'sceSblServiceMailbox',
+        'sceSblServiceMailbox_lr_sceSblAuthMgrSmFinalize',
+        'sceSblServiceMailbox_lr_verifyHeader',
+        'sceSblAuthMgrSmIsLoadable2',
+        'sceSblServiceMailbox_lr_loadSelfSegment',
+        'sceSblServiceMailbox_lr_decryptSelfBlock',
+        'sceSblServiceMailbox_lr_decryptMultipleSelfBlocks',
+        'kernel_pmap_store',
+        'mini_syscore_header',
+    ):
+        gdb.ieval('offsets.%s = %s'%(i, ostr(kdata_base + symbols[i])))
+    gdb.ieval('offsets.mmap_self_fix_1_end = (offsets.mmap_self_fix_1_start = %s) + 2'%ostr(kdata_base + symbols['mmap_self_fix_1_start']))
+    gdb.ieval('offsets.mmap_self_fix_2_end = (offsets.mmap_self_fix_2_start = %s) + 2'%ostr(kdata_base + symbols['mmap_self_fix_2_start']))
+    gdb.ieval('do_fself = 95')
+    rt1 = r0gdb.trace('trace_mailbox', '(void*)dlsym(0x2001, "mmap")', 0, 65536, 1, 0x80001, '(int)open("/data/libSceLibcInternal.sprx", 0)', 0)
+    assert not (gdb.ieval('$eflags') & 1)
+    mapping = gdb.ieval('$rax')
+    rt2 = r0gdb.trace('trace_mailbox', '(void*)dlsym(0x2001, "mlock")', mapping, 16384)
+    rt3 = r0gdb.trace('trace_mailbox', '(void*)dlsym(0x2001, "mlock")', mapping, 65536)
+    trace = traces.Trace(rt1+rt2+rt3)
+    use_kstuff()
+    init_kstuff()
+    assert not any(map(any, map(fetch_logs, range(16))))
+    fd = gdb.ieval('(int)open("/data/libSceLibcInternal.sprx", 0)')
+    assert fd >= 0
+    mapping = gdb.ieval('(void*)mmap(0, 65536, 1, 0x80001, %d, 0)'%fd)
+    assert mapping != 2**64-1
+    assert not gdb.ieval('(int)mlock(%d, 16384)'%mapping)
+    assert not gdb.ieval('(int)mlock(%d, 65536)'%mapping)
+    parasites = get_parasites(gdb.ieval('kdata_base'))
+    parasite_set = {kdata_base + i[0] for i in parasites}
+    watchpoints = set()
+    rest = []
+    for i, j in enumerate(('loadSelfSegment', 'decryptSelfBlock', 'decryptMultipleSelfBlocks')):
+        k = trace.find_caller(trace.find_next_rip(0, kdata_base + symbols['sceSblServiceMailbox_lr_'+j] - 5)) + 1
+        while trace.find_next_instr(k) == k + 1: k += 1
+        ps = [i.rip-kdata_base for i in trace[k:trace.find_next_instr(k)] if i.rip in parasite_set]
+        k = trace.find_next_instr(k)
+        watchpoints.add(tuple(ps))
+        lr = trace[k].rip - kdata_base
+        k0 = k
+        while k + 1 < len(trace) and not (trace.is_jump(k) and trace[k+1].rsp == trace[k].rsp + 8):
+            k = trace.find_next_instr(k)
+        while k > k0 and trace[k-1].rsp < trace[k].rsp:
+            k -= 1
+        assert trace[k-1].rsp == trace[k].rsp
+        epilogue = trace[k].rip - kdata_base
+        rest.append(epilogue)
+        rest.append(lr)
+    assert len(watchpoints) == 1
+    return (min(next(iter(watchpoints))),)+tuple(rest)
 
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')
