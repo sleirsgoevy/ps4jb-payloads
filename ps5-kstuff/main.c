@@ -180,8 +180,10 @@ void* load_kelf(void* ehdr, const char** symbols, uint64_t* values, void** base,
                         sym[1] = value = values[i];
                     else if(symbols[i][0] == '.' && !strcmp(symbols[i]+1, name))
                         value = values[i];
+#ifndef FIRMWARE_PORTING
                 if(!value)
                     die();
+#endif
             }
             if((uint32_t)oia[1] == 6 && oia[2])
                 die();
@@ -469,6 +471,10 @@ static void patch_shellcore(const struct shellcore_patch* patches, size_t n_patc
 
 void patch_app_db(void);
 
+#ifdef FIRMWARE_PORTING
+static struct PARASITES(100) parasites_empty = {};
+#endif
+
 static struct PARASITES(13) parasites_403 = {
     .lim_syscall = 3,
     .lim_fself = 11,
@@ -549,6 +555,7 @@ static struct parasite_desc* get_parasites(size_t* desc_size)
     uint32_t ver = buf[9] >> 16;
     switch(ver)
     {
+#ifndef FIRMWARE_PORTING
     case 0x403:
         *desc_size = sizeof(parasites_403);
         return (void*)&parasites_403;
@@ -558,7 +565,12 @@ static struct parasite_desc* get_parasites(size_t* desc_size)
     case 0x451:
         *desc_size = sizeof(parasites_451);
         return (void*)&parasites_451;
-    default: return 0;
+    default:
+        return 0;
+#else
+    default:
+        return (void*)&parasites_empty;
+#endif
     }
 }
 
@@ -566,8 +578,10 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
     if(r0gdb_init(ds, a, b, c, d))
     {
-        notify("your firmware is not supported (prosper0gdb");
+#ifndef FIRMWARE_PORTING
+        notify("your firmware is not supported (prosper0gdb)");
         return 1;
+#endif
     }
     size_t desc_size = 0;
     struct parasite_desc* desc = get_parasites(&desc_size);
@@ -581,9 +595,16 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     const struct shellcore_patch* shellcore_patches = get_shellcore_patches(&n_shellcore_patches, &shellcore_eh_frame_offset);
     if(n_shellcore_patches && !shellcore_patches)
     {
+#ifdef FIRMWARE_PORTING
+        n_shellcore_patches = 0;
+#else
         notify("your firmware is not supported (shellcore)");
         return 1;
+#endif
     }
+#ifdef FIRMWARE_PORTING
+    dbg_enter();
+#endif
     uint64_t percpu_ist4[NCPUS];
     for(int cpu = 0; cpu < NCPUS; cpu++)
         copyout(&percpu_ist4[cpu], TSS(cpu)+28+4*8, 8);
@@ -593,7 +614,9 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     uint64_t int13_handler;
     copyout(&int13_handler, IDT+16*13, 2);
     copyout((char*)&int13_handler + 2, IDT+16*13+6, 6);
+#ifndef FIRMWARE_PORTING
     dbg_enter();
+#endif
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"allocating kernel memory... ", (uintptr_t)28);
     for(int i = 0; i < 0x300; i += 2)
         r0gdb_kmalloc(0x100);

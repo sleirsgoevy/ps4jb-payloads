@@ -15,6 +15,8 @@ gdb = gdb_rpc.GDB(sys.argv[2]) if len(sys.argv) == 3 else gdb_rpc.GDB(sys.argv[2
 with open(sys.argv[1]) as file:
     symbols = json.load(file)
 
+available_symbols = set()
+
 def die(*args):
     print(*args)
     exit(1)
@@ -22,16 +24,18 @@ def die(*args):
 def set_symbol(k, v):
     assert k not in symbols or symbols[k] == v
     if k not in symbols:
-        print('offset found! %s = %s'%(k, hex(v)))
+        print('offset found! %s = %s'%(k, hex(v) if isinstance(v, int) else v))
         symbols[k] = v
         with open(sys.argv[1], 'w') as file:
             json.dump(symbols, file)
+        available_symbols.add(k)
 
 if 'allproc' not in symbols:
     die('`allproc` is not defined')
 
 R0GDB_FLAGS = ['-DMEMRW_FALLBACK', '-DNO_BUILTIN_OFFSETS']
 SELF_DUMPER_FLAGS = ['-DMEMRW_FALLBACK']
+KSTUFF_FLAGS = ['-DMEMRW_FALLBACK', '-DFIRMWARE_PORTING']
 
 r0gdb = gdb_rpc.R0GDB(gdb, R0GDB_FLAGS)
 
@@ -383,6 +387,19 @@ def use_self_dumper():
         gdb.ieval('offsets.sceSblAuthMgrSmIsLoadable2 = '+ostr(kdata_base + symbols['sceSblAuthMgrSmIsLoadable2']))
         assert 'void' == gdb.eval('set_sigsegv_handler()')
 
+def use_kstuff():
+    while not gdb.use_kstuff(R0GDB_FLAGS, KSTUFF_FLAGS):
+        gdb.kill()
+    do_use_r0gdb_raw()
+    kdata_base = gdb.ieval('kdata_base')
+    for k in available_symbols:
+        if k != 'pmap_activate_sw' and not k.endswith('_parasites'):
+            gdb.ieval('offsets.%s = %s'%(k, ostr(kdata_base + symbols[k])))
+    gdb.ieval('offsets.nop_ret = '+ostr(kdata_base + symbols['wrmsr_ret'] + 2))
+    gdb.ieval('offsets.justreturn_pop = '+ostr(kdata_base + symbols['justreturn'] + 8))
+    assert 'void' == gdb.eval('kill_thread()')
+    assert 'void' == gdb.eval('ignore_signals()')
+
 @derive_symbol
 @retry_on_error
 def rep_movsb_pop_rbp_ret():
@@ -562,7 +579,9 @@ def malloc():
     # use the ipv6 rthdr allocation to find malloc
     # 1224 is a valid size for rthdr, and prosper0gdb already has set_rthdr_size function that wraps the raw ioctl
     remote_sock = gdb.ieval('(int)socket(28, 2, 0)') # udpv6
+    assert remote_sock >= 0
     trace = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', 'set_rthdr_size', remote_sock, 1224))
+    assert gdb.ieval('$rax') == 0
     malloc_call, = (i for i in range(len(trace)) if trace.is_jump(i) and trace[i+1].rsp == trace[i].rsp-8 and trace[i].rdi == 1224 and trace[i].rdx == 1)
     malloc = trace[malloc_call+1].rip
     M_something = trace[malloc_call+1].rsi
@@ -808,6 +827,7 @@ def ensure_fselfs(fn):
     fn()
 
 @derive_symbol
+@retry_on_error
 def sceSblServiceMailbox_lr_decryptMultipleSelfBlocks():
     ensure_fselfs(lambda: use_r0gdb_trace(0))
     # set mailbox-related symbols
@@ -852,6 +872,43 @@ def sceSblServiceMailbox_lr_decryptMultipleSelfBlocks():
     except gdb_rpc.DisconnectedException: pass
     return lr - kdata_base
 
+@derive_symbols('copyin', 'copyout')
+@retry_on_error
+def copyin():
+    use_r0gdb_trace(16777216)
+    kdata_base = gdb.ieval('kdata_base')
+    pipebuf = gdb.ieval('(void*)malloc(123)')
+    assert not gdb.ieval('(int)pipe(%d)'%pipebuf)
+    fd1 = gdb.ieval('{int}%d'%pipebuf)
+    fd2 = gdb.ieval('{int}%d'%(pipebuf+4))
+    gdb.ieval('jprog = (void*[1]){0}')
+    global trace1, trace2
+    trace1 = traces.Trace(r0gdb.trace('do_jprog', '(void*)dlsym(0x2001, "_write")', fd2, pipebuf, 123))
+    trace2 = traces.Trace(r0gdb.trace('do_jprog', '(void*)dlsym(0x2001, "_read")', fd1, pipebuf, 123))
+    candidates1 = [i for i in range(1, len(trace1)) if trace1.is_jump(i-1) and trace1[i].rsp == trace1[i-1].rsp - 8 and trace1[i].rdi == pipebuf and trace1[i].rdx == 123]
+    assert len(candidates1) == 1
+    copyin = trace1[candidates1[0]].rip
+    kernel_buf = trace1[candidates1[0]].rsi
+    candidates2 = [i for i in range(1, len(trace2)) if trace2.is_jump(i-1) and trace2[i].rsp == trace2[i-1].rsp - 8 and trace2[i].rdi == kernel_buf and trace2[i].rsi == pipebuf and trace2[i].rdx == 123]
+    assert len(candidates2) == 1
+    copyout = trace2[candidates2[0]].rip
+    return copyin - kdata_base, copyout - kdata_base
+
+def fetch_logs(cpu):
+    uelf_base = gdb.ieval('uelf_bases[%d]'%cpu)
+    offset = int(os.popen("nm ../uelf/uelf | grep ' log$'").read().split()[0], 16)
+    gdb.execute('set print elements 0')
+    gdb.execute('set print repeats 0')
+    return [int(i, 16) for i in gdb.eval('{void*[512]}%d'%(uelf_base+offset)).strip()[1:-1].split(', ')]
+
+@derive_symbol
+@retry_on_error
+def syscall_parasites():
+    use_kstuff()
+    gdb.execute('cont')
+    kdata_base = gdb.ieval('kdata_base')
+    return sorted({(i - kdata_base, j) for k in map(fetch_logs, range(16)) for i, j in zip(k[::2], k[1::2]) if i})
+
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')
 
@@ -866,9 +923,12 @@ for i in derivations:
             assert len(value) == len(names)
             for i, j in zip(names, value):
                 set_symbol(i, j)
+        available_symbols |= set(names)
     elif i.__name__ not in symbols:
         print('Probing offset `%s`'%i.__name__)
         try: value = i()
         except Exception:
             raise Exception("failed to derive `%s`, see above why"%i.__name__)
         set_symbol(i.__name__, value)
+    else:
+        available_symbols.add(i.__name__)
