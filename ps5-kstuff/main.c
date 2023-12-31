@@ -375,6 +375,7 @@ static struct shellcore_patch shellcore_patches_403[] = {
     {0x974ba9, "\xe8\x22\x00\x00\x00\x58\xc3", 7}, //call 0x974bd0; pop rax; ret
     {0x5307f9, "\xeb\x04", 2}, //jmp 0x5307ff
     {0x26f35c, "\xeb\x04", 2}, //jmp 0x26f362
+    {0x26f76c, "\xeb\x04", 2}, //jmp 0x26f772
     {0x54e1f0, "\xeb", 1}, //jmp (destination unchanged)
     {0x536e1d, "\x90\xe9", 2}, //nop; jmp (destination unchanged)
     {0x54db8f, "\xeb", 1}, //jmp (destination unchanged)
@@ -475,10 +476,10 @@ void patch_app_db(void);
 static struct PARASITES(100) parasites_empty = {};
 #endif
 
-static struct PARASITES(13) parasites_403 = {
+static struct PARASITES(14) parasites_403 = {
     .lim_syscall = 3,
-    .lim_fself = 11,
-    .lim_total = 13,
+    .lim_fself = 12,
+    .lim_total = 14,
     .parasites = {
         /* syscall parasites */
         {-0x80284d, RDI},
@@ -490,6 +491,7 @@ static struct PARASITES(13) parasites_403 = {
         {-0x2cd150, RAX},
         {-0x2cce73, RAX},
         {-0x2ccbfd, RAX},
+        {-0x2cc88e, RDX},
         {-0x2cc882, RCX},
         {-0x990b10, RDI},
         {-0x2ccd36, R10},
@@ -499,10 +501,10 @@ static struct PARASITES(13) parasites_403 = {
     }
 };
 
-static struct PARASITES(13) parasites_450 = {
+static struct PARASITES(14) parasites_450 = {
     .lim_syscall = 3,
-    .lim_fself = 11,
-    .lim_total = 13,
+    .lim_fself = 12,
+    .lim_total = 14,
     .parasites = {
         /* syscall parasites */
         {-0x80281d, RDI},
@@ -514,6 +516,7 @@ static struct PARASITES(13) parasites_450 = {
         {-0x2ccfa0, RAX},
         {-0x2cccc3, RAX},
         {-0x2cca4d, RAX},
+        {-0x2cc6de, RDX},
         {-0x2cc6d2, RCX},
         {-0x990b10, RDI},
         {-0x2ccb86, R10},
@@ -523,10 +526,10 @@ static struct PARASITES(13) parasites_450 = {
     }
 };
 
-static struct PARASITES(13) parasites_451 = {
+static struct PARASITES(14) parasites_451 = {
     .lim_syscall = 3,
-    .lim_fself = 11,
-    .lim_total = 13,
+    .lim_fself = 12,
+    .lim_total = 14,
     .parasites = {
         /* syscall parasites */
         {-0x80281d, RDI},
@@ -538,6 +541,7 @@ static struct PARASITES(13) parasites_451 = {
         {-0x2ccc00, RAX},
         {-0x2cc923, RAX},
         {-0x2cc6ad, RAX},
+        {-0x2cc33e, RDX},
         {-0x2cc332, RCX},
         {-0x990b10, RDI},
         {-0x2cc7e6, R10},

@@ -1,4 +1,4 @@
-import sys, json, threading, functools, os.path, collections, tarfile, io
+import sys, json, threading, functools, os.path, collections, tarfile, io, re
 
 if 'linux' not in sys.platform:
     print('This tool only supports GNU/Linux! Use Docker or WSL on other OSes.')
@@ -591,15 +591,19 @@ def dr2gpr_start():
 @derive_symbols('malloc', 'M_something')
 @retry_on_error
 def malloc():
-    use_r0gdb_trace(16777216)
-    kdata_base = gdb.ieval('kdata_base')
-    # use the ipv6 rthdr allocation to find malloc
-    # 1224 is a valid size for rthdr, and prosper0gdb already has set_rthdr_size function that wraps the raw ioctl
-    remote_sock = gdb.ieval('(int)socket(28, 2, 0)') # udpv6
-    assert remote_sock >= 0
-    trace = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', 'set_rthdr_size', remote_sock, 1224))
-    assert gdb.ieval('$rax') == 0
-    malloc_call, = (i for i in range(len(trace)) if trace.is_jump(i) and trace[i+1].rsp == trace[i].rsp-8 and trace[i].rdi == 1224 and trace[i].rdx == 1)
+    while True:
+        use_r0gdb_trace(16777216)
+        kdata_base = gdb.ieval('kdata_base')
+        # use the ipv6 rthdr allocation to find malloc
+        # 1224 is a valid size for rthdr, and prosper0gdb already has set_rthdr_size function that wraps the raw ioctl
+        remote_sock = gdb.ieval('(int)socket(28, 2, 0)') # udpv6
+        assert remote_sock >= 0
+        trace = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', 'set_rthdr_size', remote_sock, 1224))
+        assert gdb.ieval('$rax') == 0
+        malloc_calls = [i for i in range(len(trace)) if trace.is_jump(i) and trace[i+1].rsp == trace[i].rsp-8 and trace[i].rdi == 1224 and trace[i].rdx == 1]
+        if len(malloc_calls) == 1: break
+        gdb.kill()
+    malloc_call = malloc_calls[0]
     malloc = trace[malloc_call+1].rip
     M_something = trace[malloc_call+1].rsi
     return malloc - kdata_base, M_something - kdata_base
@@ -803,13 +807,7 @@ def run_make_fself(elf_data, auth_info):
     self.save(self_file)
     return self_file.getvalue()
 
-def make_fself_and_upload(name, path):
-    full_name = name
-    name = name.split('.', 1)[0]
-    fd = gdb.ieval('(int)open("/data/%s", 0)'%full_name)
-    if fd >= 0:
-        assert not gdb.ieval('(int)close(%d)'%fd)
-        return True
+def dump_self(name, path):
     use_self_dumper()
     assert not gdb.ieval('($self_file_%s = &*(struct memfd[1]){dump_elf("%s")}, 0)'%(name, path))
     assert not gdb.ieval('($self_auth_info_%s = &*(struct memfd[1]){dump_elf_auth_info("%s")}, 0)'%(name, path))
@@ -827,6 +825,16 @@ def make_fself_and_upload(name, path):
     elf_data = files['binary.elf']
     auth_info = files['binary.elf.auth_info']
     assert elf_data and len(auth_info) == 0x88
+    return elf_data, auth_info
+
+def make_fself_and_upload(name, path):
+    full_name = name
+    name = name.split('.', 1)[0]
+    fd = gdb.ieval('(int)open("/data/%s", 0)'%full_name)
+    if fd >= 0:
+        assert not gdb.ieval('(int)close(%d)'%fd)
+        return True
+    elf_data, auth_info = dump_self(name, path)
     self_data = run_make_fself(elf_data, auth_info)
     with gdb_rpc.BlobSender(gdb, self_data, 'writing fself file to /data/%s'%full_name) as addr:
         remote_fd = gdb.ieval('r0gdb_open_socket("%s", %d)'%addr)
@@ -838,6 +846,7 @@ def make_fself_and_upload(name, path):
     return False
 
 def ensure_fselfs(fn):
+    fn_run = False
     if gdb.popen == None:
         fn()
         fn_run = True
@@ -990,6 +999,88 @@ def loadSelfSegment_watchpoint():
         rest.append(lr)
     assert len(watchpoints) == 1
     return (min(next(iter(watchpoints))),)+tuple(rest)
+
+@derive_symbol
+@retry_on_error
+def fself_parasites():
+    ensure_fselfs(use_kstuff)
+    init_kstuff()
+    kdata_base = gdb.ieval('kdata_base')
+    assert gdb.ieval('(int)dlopen("/data/libScePlayerInvitationDialog.sprx", 0)') > 0
+    fd = gdb.ieval('(int)open("/data/libSceLibcInternal.sprx", 0)')
+    assert fd >= 0
+    mapping = gdb.ieval('(void*)mmap(0, 65536, 1, 0x80001, %d, 0)'%fd)
+    assert mapping != 2**64-1
+    gdb.ieval('{void*}%d'%mapping)
+    assert not gdb.ieval('(int)mlock(%d, 16384)'%mapping)
+    assert not gdb.ieval('(int)mlock(%d, 65536)'%mapping)
+    assert not gdb.ieval('(int)munmap(%d, 65536)'%mapping)
+    assert not gdb.ieval('(int)close(%d)'%fd)
+    ans = get_parasites(kdata_base)
+    assert len(ans) == 10
+    return [(i, j) for i, j in ans if not (j == 10 and (i, 7) in ans)]
+
+def elf_to_flat(data):
+    assert data.startswith(b'\x7fELF') and len(data) >= 64
+    ans = bytearray()
+    phoff = int.from_bytes(data[32:40], 'little')
+    phnum = int.from_bytes(data[56:58], 'little')
+    assert len(data) >= phoff+56*phnum
+    for i in range(phoff, phoff+56*phnum, 56):
+        ptype = int.from_bytes(data[i:i+4], 'little')
+        if ptype != 1: continue
+        offset = int.from_bytes(data[i+8:i+16], 'little')
+        vaddr = int.from_bytes(data[i+16:i+24], 'little')
+        filesz = int.from_bytes(data[i+32:i+40], 'little')
+        memsz = int.from_bytes(data[i+40:i+48], 'little')
+        assert memsz >= filesz
+        assert len(data) >= offset + filesz
+        ans[vaddr:vaddr+filesz] = data[offset:offset+filesz]
+        ans[vaddr+filesz:vaddr+memsz] = bytes(memsz-filesz)
+    return ans
+
+@derive_symbol
+@retry_on_error
+def shellcore_offsets():
+    shellcore = elf_to_flat(dump_self('SceShellCore', '/system/vsh/SceShellCore.elf')[0])
+    shellcore_txt = shellcore.decode('latin-1').replace('\n', '\u010a')
+    def get_offsets(regexp):
+        return [shellcore_txt.find(i) for i in re.compile(regexp).findall(shellcore_txt)]
+    ans = []
+    offset, = get_offsets(r'\x80\x3d....\x01\x75\u010a\x48\x89\xd1\x31\xd2\xe9....\xb8\x01\x00\xe9\x80\xc3\xcc{7}')
+    target_fn = int.from_bytes(shellcore[offset+15:offset+19], 'little', signed=True)+offset+19
+    ans.append((offset+14, '52eb086690'))
+    ans.append((offset+25, (b'\xe8'+(target_fn-offset-30).to_bytes(4, 'little', signed=True)+b'\x58\xc3').hex()))
+    offset, = get_offsets(r'\xcc{7}\x80\x3d....\x01\x75\x0d\x48\x89\xd1\xba\x01\x00\x00\x00\xe9....\xb8\x01\x00\xe9\x80\xc3')
+    target_fn = int.from_bytes(shellcore[offset+25:offset+29], 'little', signed=True)+offset+29
+    ans.append((offset+24, '31c050ebe3'))
+    ans.append((offset, (b'\xe8'+(target_fn-offset-5).to_bytes(4, 'little', signed=True)+b'\x58\xc3').hex()))
+    offset, = get_offsets(r'\x44\x89\xe0\xff\xc8\x83\xf8\x02\x0f\x83')
+    ans.append((offset+8, 'eb04'))
+    offset1, offset2 = get_offsets(r'\xe8....\x85\xc0\x0f\x88....\x49\x8b\x46\x20\x48\xba\x00\xff\x00\xff\x00\xff\x00\xff')
+    ans.append((offset1+7, 'eb04'))
+    ans.append((offset2+7, 'eb04'))
+    offset, = get_offsets(r'\x41\x39\xdc\x74.\x48\x8d\x3d....')
+    ans.append((offset+3, 'eb'))
+    offset, = get_offsets(r'\x83\xbb....\x03\x0f\x84')
+    ans.append((offset+7, '90e9'))
+    offset, = get_offsets(r'\x41\x81\xff\x60\x00\x02\x80\x0f\x85....\x80\x7c\x24.\x00\x74.')
+    ans.append((offset+18, 'eb'))
+    offset, = get_offsets(r'\x83\xfb\x01\x0f\x84....\x83\xfb\x02\x0f\x85....')
+    target = int.from_bytes(shellcore[offset+5:offset+9], 'little', signed=True)+offset+9
+    ans.append((offset+14, (target-offset-18).to_bytes(4, 'little', signed=True).hex()))
+    for offset, data in ans:
+        data = bytes.fromhex(data)
+        shellcore[offset:offset+len(data)] = data
+    offset, = get_offsets(r'\xeb.\x48\x8b\x32\x48\x89\xdf\xe8....\xeb.\x48\x8b\x02\x49\x8b\x37')
+    target = int.from_bytes(shellcore[offset+9:offset+13], 'little', signed=True)+offset+13
+    target2 = int.from_bytes(shellcore[offset+14:offset+15], 'little', signed=True)+offset+15
+    cave1 = shellcore.find(b'\xcc'*14, offset)
+    cave2 = shellcore.find(b'\xcc'*11, cave1+14)
+    ans.append((cave1, (b'\xe8'+(target-cave1-5).to_bytes(4, 'little', signed=True)+b'\x31\xc9\xff\xc1\xe9'+(cave2-cave1-14).to_bytes(4, 'little', signed=True)).hex()))
+    ans.append((cave2, (b'\x83\xf8\x02\x0f\x43\xc1\xe9'+(target2-cave2-11).to_bytes(4, 'little', signed=True)).hex()))
+    ans.append((offset+8, (b'\xe9'+(cave1-offset-13).to_bytes(4, 'little', signed=True)).hex()))
+    return ans
 
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')
