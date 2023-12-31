@@ -1,4 +1,4 @@
-import sys, json, threading, functools, os.path, collections, tarfile, io, re
+import sys, json, threading, functools, os.path, collections, tarfile, io, re, time
 
 if 'linux' not in sys.platform:
     print('This tool only supports GNU/Linux! Use Docker or WSL on other OSes.')
@@ -396,7 +396,7 @@ def use_kstuff():
     fself_parasites = symbols['fself_parasites'] if 'fself_parasites' in available_symbols else []
     unsorted_parasites = symbols['unsorted_parasites'] if 'unsorted_parasites' in available_symbols else []
     for k in available_symbols:
-        if k != 'pmap_activate_sw' and not k.endswith('_parasites'):
+        if k not in ('pmap_activate_sw', 'shellcore_offsets') and not k.endswith('_parasites'):
             gdb.ieval('offsets.%s = %s'%(k, ostr(kdata_base + symbols[k])))
     gdb.ieval('offsets.nop_ret = '+ostr(kdata_base + symbols['wrmsr_ret'] + 2))
     gdb.ieval('offsets.justreturn_pop = '+ostr(kdata_base + symbols['justreturn'] + 8))
@@ -411,6 +411,15 @@ def use_kstuff():
     for i, (addr, reg) in enumerate(parasites):
         assert reg in range(16)
         gdb.ieval('(parasites_empty.parasites[%d].address = %d, parasites_empty.parasites[%d].reg = %d)'%(i, addr, i, regs.index(reg)))
+    args = []
+    if 'shellcore_offsets' in available_symbols:
+        n = len(symbols['shellcore_offsets'])
+        for addr, patch in symbols['shellcore_offsets']:
+            patch = bytes.fromhex(patch)
+            args.append('(void*)'+hex(addr))
+            args.append('"'+''.join(map('\\x%02x'.__mod__, patch))+'"')
+            args.append('(void*)'+str(len(patch)))
+        gdb.ieval('(shellcore_patches = (void*[%d]){%s}, n_shellcore_patches = %d)'%(3*n, ', '.join(args), n))
 
 def init_kstuff():
     assert 'void' == gdb.eval('kill_thread()')
@@ -1055,17 +1064,27 @@ def shellcore_offsets():
     target_fn = int.from_bytes(shellcore[offset+25:offset+29], 'little', signed=True)+offset+29
     ans.append((offset+24, '31c050ebe3'))
     ans.append((offset, (b'\xe8'+(target_fn-offset-5).to_bytes(4, 'little', signed=True)+b'\x58\xc3').hex()))
-    offset, = get_offsets(r'\x44\x89\xe0\xff\xc8\x83\xf8\x02\x0f\x83')
+    offset, = get_offsets(r'\x44\x89[\xe0\xf8]\xff\xc8\x83\xf8\x02\x0f\x83')
     ans.append((offset+8, 'eb04'))
-    offset1, offset2 = get_offsets(r'\xe8....\x85\xc0\x0f\x88....\x49\x8b\x46\x20\x48\xba\x00\xff\x00\xff\x00\xff\x00\xff')
-    ans.append((offset1+7, 'eb04'))
-    ans.append((offset2+7, 'eb04'))
-    offset, = get_offsets(r'\x41\x39\xdc\x74.\x48\x8d\x3d....')
-    ans.append((offset+3, 'eb'))
+    offsets = get_offsets(r'(\xe8....\x85\xc0\x0f\x88....\x49\x8b\x46\x20\x48\xba\x00\xff\x00\xff\x00\xff\x00\xff|\xe8....\x85\xc0\x0f\x84....\x0f\x88....\x49\x0f\x38)')
+    assert len(offsets) == 2
+    for i in offsets:
+        if shellcore[i+8] == 0x88:
+            ans.append((i+7, 'eb04'))
+        else:
+            ans.append((i+13, 'eb04'))
+    offset, = get_offsets(r'(\x41\x39\xdc\x74.\x48\x8d\x3d....|\x3b\x84\x24....\x75.\x31\xc9\xeb.)')
+    if shellcore[offset] == 0x41:
+        ans.append((offset+3, 'eb'))
+    else:
+        ans.append((offset+7, '9090'))
     offset, = get_offsets(r'\x83\xbb....\x03\x0f\x84')
     ans.append((offset+7, '90e9'))
-    offset, = get_offsets(r'\x41\x81\xff\x60\x00\x02\x80\x0f\x85....\x80\x7c\x24.\x00\x74.')
-    ans.append((offset+18, 'eb'))
+    offset, = get_offsets(r'(\x41\x81\xff\x60\x00\x02\x80\x0f\x85....\x80\x7c\x24.\x00\x74.|\x41\x81\xfd\x60\x00\x02\x80\x0f\x85....\x84\xc0\x74\x31)')
+    if shellcore[offset+2] == 0xff:
+        ans.append((offset+18, 'eb'))
+    else:
+        ans.append((offset+15, 'eb'))
     offset, = get_offsets(r'\x83\xfb\x01\x0f\x84....\x83\xfb\x02\x0f\x85....')
     target = int.from_bytes(shellcore[offset+5:offset+9], 'little', signed=True)+offset+9
     ans.append((offset+14, (target-offset-18).to_bytes(4, 'little', signed=True).hex()))
