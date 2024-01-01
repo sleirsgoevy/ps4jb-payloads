@@ -419,8 +419,20 @@ static struct shellcore_patch shellcore_patches_451[] = {
 
 extern char _start[];
 
+static void relocate_shellcore_patches(struct shellcore_patch* patches, size_t n_patches)
+{
+    static uint64_t start_nonreloc = (uint64_t)_start;
+    uint64_t start = (uint64_t)_start;
+    for(size_t i = 0; i < n_patches; i++)
+        patches[i].data += start - start_nonreloc;
+}
+
 static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches, uint64_t* eh_frame_offset)
 {
+#ifdef FIRMWARE_PORTING
+    *n_patches = 1;
+    return 0;
+#endif
 #define FW(x, eh_frame)\
     case 0x ## x:\
         *eh_frame_offset = eh_frame;\
@@ -442,10 +454,7 @@ static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches, ui
         return 0;
     }
 #undef FW
-    static uint64_t start_nonreloc = (uint64_t)_start;
-    uint64_t start = (uint64_t)_start;
-    for(size_t i = 0; i < *n_patches; i++)
-        patches[i].data += start - start_nonreloc;
+    relocate_shellcore_patches(patches, *n_patches);
     return patches;
 }
 
