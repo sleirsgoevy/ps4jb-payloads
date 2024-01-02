@@ -370,6 +370,23 @@ struct shellcore_patch
     size_t sz;
 };
 
+static struct shellcore_patch shellcore_patches_300[] = {
+    {0x9d1cae, "\x52\xeb\x08\x66\x90"},
+    {0x9d1cb9, "\xe8\x02\xfc\xff\xff\x58\xc3"},
+    {0x9d18b1, "\x31\xc0\x50\xeb\xe3"},
+    {0x9d1899, "\xe8\x22\x00\x00\x00\x58\xc3"},
+    {0x4dcfb4, "\xeb\x04"},
+    {0x2569b1, "\xeb\x04"},
+    {0x25af5a, "\xeb\x04"},
+    {0x4fafca, "\x90\x90"},
+    {0x4e335d, "\x90\xe9"},
+    {0x4fbb63, "\xeb"},
+    {0x4ff329, "\xd0\x00\x00\x00"},
+    {0x1968c1, "\xe8\x4a\xde\x42\x00\x31\xc9\xff\xc1\xe9\x12\x01\x00\x00"},
+    {0x1969e1, "\x83\xf8\x02\x0f\x43\xc1\xe9\xff\xfb\xff\xff"},
+    {0x1965c9, "\xe9\xf3\x02\x00\x00"},
+};
+
 static struct shellcore_patch shellcore_patches_320[] = {
     {0x9d1f9e, "\x52\xeb\x08\x66\x90"},
     {0x9d1fa9, "\xe8\x02\xfc\xff\xff\x58\xc3"},
@@ -521,6 +538,7 @@ static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches)
     struct shellcore_patch* patches;
     switch(ver)
     {
+    FW(300);
     FW(320);
     FW(321);
     FW(403);
@@ -561,6 +579,29 @@ void patch_app_db(void);
 #ifdef FIRMWARE_PORTING
 static struct PARASITES(100) parasites_empty = {};
 #endif
+
+static struct PARASITES(12) parasites_300 = {
+    .lim_syscall = 3,
+    .lim_fself = 12,
+    .lim_total = 12,
+    .parasites = {
+        /* syscall parasites */
+        {-0x7e96ad, RDI},
+        {-0x38214c, RSI},
+        {-0x38210c, RSI},
+        /* fself parasites */
+        {-0x970280, RDI},
+        {-0x2c922a, RAX},
+        {-0x2c90f0, RAX},
+        {-0x2c8e0e, RAX},
+        {-0x2c8cc6, R10},
+        {-0x2c8b8d, RAX},
+        {-0x2c881e, RDX},
+        {-0x2c8812, RCX},
+        {-0x2c86a6, RAX},
+        /* unsorted parasites */
+    }
+};
 
 static struct PARASITES(12) parasites_320 = {
     .lim_syscall = 3,
@@ -692,6 +733,9 @@ static struct parasite_desc* get_parasites(size_t* desc_size)
     switch(ver)
     {
 #ifndef FIRMWARE_PORTING
+    case 0x300:
+        *desc_size = sizeof(parasites_300);
+        return (void*)&parasites_300;
     case 0x320:
         *desc_size = sizeof(parasites_320);
         return (void*)&parasites_320;
