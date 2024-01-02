@@ -170,7 +170,7 @@ class GDB:
         sys.stdout.flush()
         self.stdio, stdio = socket.socketpair(socket.AF_UNIX)
         with stdio:
-            self.popen = subprocess.Popen(('gdb', '../../'+self.payload_path, '-ex', 'target remote '+self.ps5_ip+':1234', '-ex', 'py\n'+rpc_server+'\nend'), stdin=stdio, stdout=stdio, bufsize=0)
+            self.popen = subprocess.Popen(('gdb', '../../'+self.payload_path, '-ex', 'target remote '+self.ps5_ip+':1234', '-ex', 'py\n'+rpc_server+'\nend'), stdin=stdio, stdout=stdio, bufsize=0, preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGINT]))
         self._read_until(token.encode('ascii')+b'\n')
         print('done')
     def execute(self, cmd, timeout=None):

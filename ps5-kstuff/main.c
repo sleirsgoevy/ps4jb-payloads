@@ -5,6 +5,8 @@
 #include <signal.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include "../prosper0gdb/r0gdb.h"
 #include "../prosper0gdb/offsets.h"
 #include "../gdb_stub/dbg.h"
@@ -427,15 +429,54 @@ static void relocate_shellcore_patches(struct shellcore_patch* patches, size_t n
         patches[i].data += start - start_nonreloc;
 }
 
-static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches, uint64_t* eh_frame_offset)
+uint64_t get_eh_frame_offset(const char* path)
+{
+    int fd = open(path, O_RDONLY);
+    if(!fd)
+        return 0;
+    unsigned long long shit[4];
+    if(read(fd, shit, sizeof(shit)) != sizeof(shit))
+    {
+        close(fd);
+        return 0;
+    }
+    off_t o2 = 0x20*((shit[3]&0xffff)+1);
+    lseek(fd, o2, SEEK_SET);
+    unsigned long long ehdr[8];
+    if(read(fd, ehdr, sizeof(ehdr)) != sizeof(ehdr))
+    {
+        close(fd);
+        return 0;
+    }
+    off_t phdr_offset = o2 + ehdr[4];
+    int nphdr = ehdr[7] & 0xffff;
+    unsigned long long eh_frame = 0;
+    lseek(fd, phdr_offset, SEEK_SET);
+    for(int i = 0; i < nphdr; i++)
+    {
+        unsigned long long phdr[7];
+        if(read(fd, phdr, sizeof(phdr)) != sizeof(phdr))
+        {
+            close(fd);
+            return 0;
+        }
+        unsigned long long addr = phdr[2];
+        int ptype = phdr[0] & 0xffffffff;
+        if(ptype == 0x6474e550)
+            eh_frame = addr;
+    }
+    close(fd);
+    return eh_frame;
+}
+
+static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches)
 {
 #ifdef FIRMWARE_PORTING
     *n_patches = 1;
     return 0;
 #endif
-#define FW(x, eh_frame)\
+#define FW(x)\
     case 0x ## x:\
-        *eh_frame_offset = eh_frame;\
         *n_patches = sizeof(shellcore_patches_ ## x) / sizeof(*shellcore_patches_ ## x);\
         patches = shellcore_patches_ ## x;\
         break
@@ -446,9 +487,9 @@ static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches, ui
     struct shellcore_patch* patches;
     switch(ver)
     {
-    FW(403, 0x13c0000);
-    FW(450, 0x13cc000);
-    FW(451, 0x13cc000);
+    FW(403);
+    FW(450);
+    FW(451);
     default:
         *n_patches = 1;
         return 0;
@@ -605,8 +646,8 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         return 1;
     }
     size_t n_shellcore_patches;
-    uint64_t shellcore_eh_frame_offset;
-    const struct shellcore_patch* shellcore_patches = get_shellcore_patches(&n_shellcore_patches, &shellcore_eh_frame_offset);
+    uint64_t shellcore_eh_frame_offset = get_eh_frame_offset("/system/vsh/SceShellCore.elf");
+    const struct shellcore_patch* shellcore_patches = get_shellcore_patches(&n_shellcore_patches);
     if(n_shellcore_patches && !shellcore_patches)
     {
 #ifdef FIRMWARE_PORTING
