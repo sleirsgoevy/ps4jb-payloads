@@ -402,6 +402,8 @@ def use_kstuff():
     gdb.ieval('offsets.justreturn_pop = '+ostr(kdata_base + symbols['justreturn'] + 8))
     gdb.ieval('offsets.mmap_self_fix_1_end = offsets.mmap_self_fix_1_start + 2')
     gdb.ieval('offsets.mmap_self_fix_2_end = offsets.mmap_self_fix_2_start + 2')
+    gdb.ieval('offsets.mprotect_fix_end = '+ostr(kdata_base+symbols['mprotect_fix_start']+6))
+    gdb.ieval('offsets.pop_all_except_rdi_iret = '+ostr(kdata_base+symbols['pop_all_iret']+4))
     parasites = syscall_parasites + fself_parasites + unsorted_parasites
     assert len(parasites) <= 100
     gdb.ieval('parasites_empty.lim_syscall = %d'%(len(syscall_parasites)))
@@ -1132,6 +1134,7 @@ def printf():
     'sceSblPfsSetKeys',
     'sceSblServiceCryptAsync',
 )
+@retry_on_error
 def sceSblServiceMailbox_lr_verifySuperBlock():
     use_kstuff()
     assert 'void' == gdb.eval('kill_thread()')
@@ -1252,6 +1255,55 @@ def sceSblServiceMailbox_lr_verifySuperBlock():
         sceSblPfsSetKeys-kdata_base,
         sceSblServiceCryptAsync-kdata_base,
     )
+
+@derive_symbol
+@retry_on_error
+def sceSblServiceCryptAsync_deref_singleton():
+    use_kstuff()
+    init_kstuff()
+    print('Launch a PS4 fake package.')
+    while True:
+        ans = get_parasites(gdb.ieval('kdata_base'))
+        if ans: break
+        time.sleep(5)
+    assert ans and ans == [(ans[0][0], 0), (ans[0][0], 3)]
+    assert ans[0][0] - symbols['sceSblServiceCryptAsync'] in range(256)
+    return ans[0][0]
+
+@derive_symbol
+@retry_on_error
+def crypt_message_resolve():
+    use_r0gdb_raw()
+    kdata_base = gdb.ieval('kdata_base')
+    gdb.ieval('$pc = '+ostr(kdata_base + symbols['sceSblServiceCryptAsync']))
+    arg = gdb.ieval('{void*}($rdi = $rsp + 8) = $rsp + 8')
+    prev_rip = gdb.ieval('$pc')
+    prev_rsp = gdb.ieval('$rsp')
+    while True:
+        gdb.execute('stepi')
+        rip = gdb.ieval('$pc')
+        rsp = gdb.ieval('$rsp')
+        print(hex(rip), hex(rsp))
+        if rip not in range(prev_rip, prev_rip+16) and rsp == prev_rsp - 8: # function call
+            if gdb.ieval('$rdi') % 2**64 == arg % 2**64 and gdb.ieval('$rsi') == 0xffffffdb:
+                return rip - kdata_base
+            gdb.ieval('$rax = 0')
+            gdb.ieval('$pc = '+ostr(kdata_base + symbols['wrmsr_ret'] + 2))
+        prev_rip = rip
+        prev_rsp = rsp
+
+##These are not so important, just ignore for now
+#@derive_symbol
+#@retry_on_error
+#def unsorted_parasites():
+#    use_kstuff()
+#    init_kstuff()
+#    print('Launch and close a PS4 fake package. Press Enter when the game is fully closed.')
+#    input('> ')
+#    time.sleep(10)
+#    kdata_base = gdb.ieval('kdata_base')
+#    ans = get_parasites(kdata_base)
+#    assert False, ans
 
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')
