@@ -15,6 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "../prosper0gdb/r0gdb.h"
+#include "../prosper0gdb/offsets.h"
 #include "../gdb_stub/dbg.h"
 
 extern uint64_t kdata_base;
@@ -290,7 +291,7 @@ static int64_t do_remote_syscall(int pid, int sysc, ...)
     va_end(l);
     uint64_t proc;
     uint64_t target = 0;
-    copyout(&proc, kdata_base+0x27edcb8, 8);
+    copyout(&proc, offsets.allproc, 8);
     while(proc)
     {
         uint32_t pid1;
@@ -308,7 +309,7 @@ static int64_t do_remote_syscall(int pid, int sysc, ...)
     copyout(&target_thread, target+16, 8);
     copyin(args_p, args, 48);
     uint64_t syscall_fn;
-    copyout(&syscall_fn, kdata_base+0x1709c0+48*sysc+8, 8);
+    copyout(&syscall_fn, offsets.sysents+48*sysc+8, 8);
     int err = r0gdb_kfncall(syscall_fn, target_thread, args_p);
     if(err)
         return -err;
