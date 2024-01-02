@@ -80,6 +80,7 @@ DEF(security_flags, 0x6466474)
 DEF(targetid, 0x646647d)
 DEF(qa_flags, 0x6466498)
 DEF(utoken, 0x6466500)
+#include "offset_list.txt"
 END_FW()
 
 START_FW(321)
@@ -153,6 +154,7 @@ DEF(security_flags, 0x6466474)
 DEF(targetid, 0x646647d)
 DEF(qa_flags, 0x6466498)
 DEF(utoken, 0x6466500)
+#include "offset_list.txt"
 END_FW()
 
 START_FW(403)
