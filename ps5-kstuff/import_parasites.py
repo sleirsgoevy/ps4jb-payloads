@@ -27,5 +27,5 @@ print('};')
 
 print('static struct shellcore_patch shellcore_patches_###[] = {')
 for i, j in symbols['shellcore_offsets']:
-    print('    {%s, "%s"},'%(hex(i), ''.join(map('\\x%02x'.__mod__, bytes.fromhex(j)))))
+    print('    {%s, "%s", %d},'%(hex(i), ''.join(map('\\x%02x'.__mod__, bytes.fromhex(j))), len(bytes.fromhex(j))))
 print('};')
