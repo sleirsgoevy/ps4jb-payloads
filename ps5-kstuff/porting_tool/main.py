@@ -1066,7 +1066,7 @@ def shellcore_offsets():
     target_fn = int.from_bytes(shellcore[offset+25:offset+29], 'little', signed=True)+offset+29
     ans.append((offset+24, '31c050ebe3'))
     ans.append((offset, (b'\xe8'+(target_fn-offset-5).to_bytes(4, 'little', signed=True)+b'\x58\xc3').hex()))
-    offset, = get_offsets(r'\x44\x89[\xe0\xf8]\xff\xc8\x83\xf8\x02\x0f\x83')
+    offset, = get_offsets(r'\x44\x89[\xe0\xe8\xf8]\xff\xc8\x83\xf8\x02\x0f\x83')
     ans.append((offset+8, 'eb04'))
     offsets = get_offsets(r'(\xe8....\x85\xc0\x0f\x88....\x49\x8b\x46\x20\x48\xba\x00\xff\x00\xff\x00\xff\x00\xff|\xe8....\x85\xc0\x0f\x84....\x0f\x88....\x49\x0f\x38)')
     assert len(offsets) == 2
@@ -1075,14 +1075,14 @@ def shellcore_offsets():
             ans.append((i+7, 'eb04'))
         else:
             ans.append((i+13, 'eb04'))
-    offset, = get_offsets(r'(\x41\x39\xdc\x74.\x48\x8d\x3d....|\x3b\x84\x24....\x75.\x31\xc9\xeb.)')
+    offset, = get_offsets(r'(\x41\x39[\xdc\xdd]\x74.\x48\x8d\x3d....|\x3b\x84\x24....\x75.\x31\xc9\xeb.)')
     if shellcore[offset] == 0x41:
         ans.append((offset+3, 'eb'))
     else:
         ans.append((offset+7, '9090'))
     offset, = get_offsets(r'\x83\xbb....\x03\x0f\x84')
     ans.append((offset+7, '90e9'))
-    offset, = get_offsets(r'(\x41\x81\xff\x60\x00\x02\x80\x0f\x85....\x80\x7c\x24.\x00\x74.|\x41\x81\xfd\x60\x00\x02\x80\x0f\x85....\x84\xc0\x74\x31)')
+    offset, = get_offsets(r'(\x41\x81[\xfc\xff]\x60\x00\x02\x80\x0f\x85....\x80\x7c\x24.\x00\x74.|\x41\x81[\xfc\xfd]\x60\x00\x02\x80\x0f\x85....\x84\xc0\x74.)')
     if shellcore[offset+2] == 0xff:
         ans.append((offset+18, 'eb'))
     else:

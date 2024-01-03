@@ -603,6 +603,29 @@ static struct PARASITES(12) parasites_300 = {
     }
 };
 
+static struct PARASITES(12) parasites_310 = {
+    .lim_syscall = 3,
+    .lim_fself = 12,
+    .lim_total = 12,
+    .parasites = {
+        /* syscall parasites */
+        {-0x7e966d, RDI},
+        {-0x38210c, RSI},
+        {-0x3820cc, RSI},
+        /* fself parasites */
+        {-0x970280, RDI},
+        {-0x2c91ea, RAX},
+        {-0x2c90b0, RAX},
+        {-0x2c8dce, RAX},
+        {-0x2c8c86, R10},
+        {-0x2c8b4d, RAX},
+        {-0x2c87de, RDX},
+        {-0x2c87d2, RCX},
+        {-0x2c8666, RAX},
+        /* unsorted parasites */
+    }
+};
+
 static struct PARASITES(12) parasites_320 = {
     .lim_syscall = 3,
     .lim_fself = 12,
@@ -736,6 +759,9 @@ static struct parasite_desc* get_parasites(size_t* desc_size)
     case 0x300:
         *desc_size = sizeof(parasites_300);
         return (void*)&parasites_300;
+    case 0x310:
+        *desc_size = sizeof(parasites_310);
+        return (void*)&parasites_310;
     case 0x320:
         *desc_size = sizeof(parasites_320);
         return (void*)&parasites_320;
