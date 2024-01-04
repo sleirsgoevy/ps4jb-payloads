@@ -15,6 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "../prosper0gdb/r0gdb.h"
+#include "../prosper0gdb/offsets.h"
 #include "../gdb_stub/dbg.h"
 
 extern uint64_t kdata_base;
@@ -290,7 +291,7 @@ static int64_t do_remote_syscall(int pid, int sysc, ...)
     va_end(l);
     uint64_t proc;
     uint64_t target = 0;
-    copyout(&proc, kdata_base+0x27edcb8, 8);
+    copyout(&proc, offsets.allproc, 8);
     while(proc)
     {
         uint32_t pid1;
@@ -308,7 +309,7 @@ static int64_t do_remote_syscall(int pid, int sysc, ...)
     copyout(&target_thread, target+16, 8);
     copyin(args_p, args, 48);
     uint64_t syscall_fn;
-    copyout(&syscall_fn, kdata_base+0x1709c0+48*sysc+8, 8);
+    copyout(&syscall_fn, offsets.sysents+48*sysc+8, 8);
     int err = r0gdb_kfncall(syscall_fn, target_thread, args_p);
     if(err)
         return -err;
@@ -319,16 +320,25 @@ static int64_t do_remote_syscall(int pid, int sysc, ...)
 
 static uint64_t shellcore_args_base;
 
-static void temp_patch_shellcore(int do_lk)
+struct shellcore_patch
+{
+    uint64_t offset;
+    char* data;
+    size_t sz;
+};
+
+uint64_t get_eh_frame_offset(const char* path);
+
+static void temp_patch_shellcore(struct shellcore_patch* sc_patches, int n_patches, int do_lk)
 {
     int pid = find_proc("SceShellCore");
     struct module_info_ex mod_info;
     mod_info.st_size = sizeof(mod_info);
     do_remote_syscall(pid, SYS_dynlib_get_info_ex, 0, 0, &mod_info);
-    uint64_t shellcore_base = mod_info.eh_frame_hdr_addr - 0x13c0000;
+    uint64_t shellcore_base = mod_info.eh_frame_hdr_addr - get_eh_frame_offset("/system/vsh/SceShellCore.elf");
     mod_info.st_size = sizeof(mod_info);
-    do_remote_syscall(pid, SYS_dynlib_get_info_ex, 0x2001, 0, &mod_info);
-    uint64_t libkernel_base = mod_info.eh_frame_hdr_addr - 0x44000;
+    uint64_t libkernel_nmount;
+    do_remote_syscall(pid, SYS_dynlib_dlsym, 0x2001, "nmount", &libkernel_nmount);
     shellcore_args_base = do_remote_syscall(pid, SYS_mmap, 0, 16384, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
     struct
     {
@@ -336,15 +346,16 @@ static void temp_patch_shellcore(int do_lk)
         void* data;
         size_t sz;
     } patches[] = {
-        {shellcore_base+0x974fe0, "\x31\xc0\xc3", 3},
-        {shellcore_base+0x974bb0, "\x31\xc0\xc3", 3},
-        {shellcore_base+0x5307f9, "\xeb\x04", 2},
-        {shellcore_base+0x26f35c, "\xeb\x04", 2},
-        {shellcore_base+0x54e1f0, "\xeb", 1},
-        {shellcore_base+0x536e1d, "\x90\xe9", 2},
-        {libkernel_base+0x18f0, "\x48\xb8\xef\xbe\xad\xde\xef\xbe\xad\xde\x48\x89\x38\x48\x89\x70\x08\x48\x89\x50\x10\xeb\xfe", do_lk ? 23 : 0},
-        {libkernel_base+0x18f2, &shellcore_args_base, do_lk ? 8 : 0},
+        {libkernel_nmount, "\x48\xb8\xef\xbe\xad\xde\xef\xbe\xad\xde\x48\x89\x38\x48\x89\x70\x08\x48\x89\x50\x10\xeb\xfe", do_lk ? 23 : 0},
+        {libkernel_nmount+2, &shellcore_args_base, do_lk ? 8 : 0},
     };
+    for(int i = 0; i < n_patches; i++)
+    {
+        uint64_t arg1[4] = {1, 0x13};
+        uint64_t arg2[8] = {pid, shellcore_base+sc_patches[i].offset, (uint64_t)sc_patches[i].data, sc_patches[i].sz};
+        uint64_t arg3[4] = {0};
+        mdbg_call_20(arg1, arg2, arg3);
+    }
     for(int i = 0; i < sizeof(patches) / sizeof(*patches); i++)
     {
         uint64_t arg1[4] = {1, 0x13};

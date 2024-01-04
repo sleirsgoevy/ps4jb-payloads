@@ -1,4 +1,4 @@
-import sys, json, threading, functools, os.path, collections, tarfile, io
+import sys, json, threading, functools, os.path, collections, tarfile, io, re, time
 
 if 'linux' not in sys.platform:
     print('This tool only supports GNU/Linux! Use Docker or WSL on other OSes.')
@@ -15,6 +15,8 @@ gdb = gdb_rpc.GDB(sys.argv[2]) if len(sys.argv) == 3 else gdb_rpc.GDB(sys.argv[2
 with open(sys.argv[1]) as file:
     symbols = json.load(file)
 
+available_symbols = set()
+
 def die(*args):
     print(*args)
     exit(1)
@@ -22,16 +24,18 @@ def die(*args):
 def set_symbol(k, v):
     assert k not in symbols or symbols[k] == v
     if k not in symbols:
-        print('offset found! %s = %s'%(k, hex(v)))
+        print('offset found! %s = %s'%(k, hex(v) if isinstance(v, int) else v))
         symbols[k] = v
         with open(sys.argv[1], 'w') as file:
             json.dump(symbols, file)
+        available_symbols.add(k)
 
 if 'allproc' not in symbols:
     die('`allproc` is not defined')
 
 R0GDB_FLAGS = ['-DMEMRW_FALLBACK', '-DNO_BUILTIN_OFFSETS']
 SELF_DUMPER_FLAGS = ['-DMEMRW_FALLBACK']
+KSTUFF_FLAGS = ['-DMEMRW_FALLBACK', '-DFIRMWARE_PORTING']
 
 r0gdb = gdb_rpc.R0GDB(gdb, R0GDB_FLAGS)
 
@@ -383,6 +387,47 @@ def use_self_dumper():
         gdb.ieval('offsets.sceSblAuthMgrSmIsLoadable2 = '+ostr(kdata_base + symbols['sceSblAuthMgrSmIsLoadable2']))
         assert 'void' == gdb.eval('set_sigsegv_handler()')
 
+def use_kstuff():
+    while not gdb.use_kstuff(R0GDB_FLAGS, KSTUFF_FLAGS):
+        gdb.kill()
+    do_use_r0gdb_raw()
+    kdata_base = gdb.ieval('kdata_base')
+    syscall_parasites = symbols['syscall_parasites'] if 'syscall_parasites' in available_symbols else []
+    fself_parasites = symbols['fself_parasites'] if 'fself_parasites' in available_symbols else []
+    unsorted_parasites = symbols['unsorted_parasites'] if 'unsorted_parasites' in available_symbols else []
+    for k in available_symbols:
+        if k not in ('pmap_activate_sw', 'shellcore_offsets', 'printf') and not k.endswith('_parasites'):
+            gdb.ieval('offsets.%s = %s'%(k, ostr(kdata_base + symbols[k])))
+    gdb.ieval('offsets.nop_ret = '+ostr(kdata_base + symbols['wrmsr_ret'] + 2))
+    gdb.ieval('offsets.justreturn_pop = '+ostr(kdata_base + symbols['justreturn'] + 8))
+    gdb.ieval('offsets.mmap_self_fix_1_end = offsets.mmap_self_fix_1_start + 2')
+    gdb.ieval('offsets.mmap_self_fix_2_end = offsets.mmap_self_fix_2_start + 2')
+    gdb.ieval('offsets.mprotect_fix_end = '+ostr(kdata_base+symbols['mprotect_fix_start']+6))
+    gdb.ieval('offsets.pop_all_except_rdi_iret = '+ostr(kdata_base+symbols['pop_all_iret']+4))
+    parasites = syscall_parasites + fself_parasites + unsorted_parasites
+    assert len(parasites) <= 100
+    gdb.ieval('parasites_empty.lim_syscall = %d'%(len(syscall_parasites)))
+    gdb.ieval('parasites_empty.lim_fself = %d'%(len(syscall_parasites) + len(fself_parasites)))
+    gdb.ieval('parasites_empty.lim_total = %d'%(len(parasites)))
+    regs = [7, 6, 2, 1, 8, 9, 0, 3, 5, 10, 11, 12, 13, 14, 15, None, None, None, 4]
+    for i, (addr, reg) in enumerate(parasites):
+        assert reg in range(16)
+        gdb.ieval('(parasites_empty.parasites[%d].address = %d, parasites_empty.parasites[%d].reg = %d)'%(i, addr, i, regs.index(reg)))
+    args = []
+    if 'shellcore_offsets' in available_symbols:
+        n = len(symbols['shellcore_offsets'])
+        for addr, patch in symbols['shellcore_offsets']:
+            patch = bytes.fromhex(patch)
+            args.append('(void*)'+hex(addr))
+            args.append('"'+''.join(map('\\x%02x'.__mod__, patch))+'"')
+            args.append('(void*)'+str(len(patch)))
+        gdb.ieval('(shellcore_patches = (void*[%d]){%s}, n_shellcore_patches = %d)'%(3*n, ', '.join(args), n))
+
+def init_kstuff():
+    assert 'void' == gdb.eval('kill_thread()')
+    assert 'void' == gdb.eval('ignore_signals()')
+    gdb.execute('cont')
+
 @derive_symbol
 @retry_on_error
 def rep_movsb_pop_rbp_ret():
@@ -557,13 +602,19 @@ def dr2gpr_start():
 @derive_symbols('malloc', 'M_something')
 @retry_on_error
 def malloc():
-    use_r0gdb_trace(16777216)
-    kdata_base = gdb.ieval('kdata_base')
-    # use the ipv6 rthdr allocation to find malloc
-    # 1224 is a valid size for rthdr, and prosper0gdb already has set_rthdr_size function that wraps the raw ioctl
-    remote_sock = gdb.ieval('(int)socket(28, 2, 0)') # udpv6
-    trace = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', 'set_rthdr_size', remote_sock, 1224))
-    malloc_call, = (i for i in range(len(trace)) if trace.is_jump(i) and trace[i+1].rsp == trace[i].rsp-8 and trace[i].rdi == 1224 and trace[i].rdx == 1)
+    while True:
+        use_r0gdb_trace(16777216)
+        kdata_base = gdb.ieval('kdata_base')
+        # use the ipv6 rthdr allocation to find malloc
+        # 1224 is a valid size for rthdr, and prosper0gdb already has set_rthdr_size function that wraps the raw ioctl
+        remote_sock = gdb.ieval('(int)socket(28, 2, 0)') # udpv6
+        assert remote_sock >= 0
+        trace = traces.Trace(r0gdb.trace('trace_skip_scheduler_only', 'set_rthdr_size', remote_sock, 1224))
+        assert gdb.ieval('$rax') == 0
+        malloc_calls = [i for i in range(len(trace)) if trace.is_jump(i) and trace[i+1].rsp == trace[i].rsp-8 and trace[i].rdi == 1224 and trace[i].rdx == 1]
+        if len(malloc_calls) == 1: break
+        gdb.kill()
+    malloc_call = malloc_calls[0]
     malloc = trace[malloc_call+1].rip
     M_something = trace[malloc_call+1].rsi
     return malloc - kdata_base, M_something - kdata_base
@@ -767,13 +818,7 @@ def run_make_fself(elf_data, auth_info):
     self.save(self_file)
     return self_file.getvalue()
 
-def make_fself_and_upload(name, path):
-    full_name = name
-    name = name.split('.', 1)[0]
-    fd = gdb.ieval('(int)open("/data/%s", 0)'%full_name)
-    if fd >= 0:
-        assert not gdb.ieval('(int)close(%d)'%fd)
-        return
+def dump_self(name, path):
     use_self_dumper()
     assert not gdb.ieval('($self_file_%s = &*(struct memfd[1]){dump_elf("%s")}, 0)'%(name, path))
     assert not gdb.ieval('($self_auth_info_%s = &*(struct memfd[1]){dump_elf_auth_info("%s")}, 0)'%(name, path))
@@ -791,6 +836,16 @@ def make_fself_and_upload(name, path):
     elf_data = files['binary.elf']
     auth_info = files['binary.elf.auth_info']
     assert elf_data and len(auth_info) == 0x88
+    return elf_data, auth_info
+
+def make_fself_and_upload(name, path):
+    full_name = name
+    name = name.split('.', 1)[0]
+    fd = gdb.ieval('(int)open("/data/%s", 0)'%full_name)
+    if fd >= 0:
+        assert not gdb.ieval('(int)close(%d)'%fd)
+        return True
+    elf_data, auth_info = dump_self(name, path)
     self_data = run_make_fself(elf_data, auth_info)
     with gdb_rpc.BlobSender(gdb, self_data, 'writing fself file to /data/%s'%full_name) as addr:
         remote_fd = gdb.ieval('r0gdb_open_socket("%s", %d)'%addr)
@@ -799,15 +854,20 @@ def make_fself_and_upload(name, path):
         assert file_fd >= 0
         assert not gdb.ieval('r0gdb_sendfile(%d, %d)'%(remote_fd, file_fd))
         assert not gdb.ieval('(int)close(%d) | (int)close(%d)'%(remote_fd, file_fd))
+    return False
 
 def ensure_fselfs(fn):
+    fn_run = False
     if gdb.popen == None:
         fn()
-    make_fself_and_upload('libSceLibcInternal.sprx', '/system/common/lib/libSceLibcInternal.sprx')
-    make_fself_and_upload('libScePlayerInvitationDialog.sprx', '/system/common/lib/libScePlayerInvitationDialog.sprx')
-    fn()
+        fn_run = True
+    if (not make_fself_and_upload('libSceLibcInternal.sprx', '/system/common/lib/libSceLibcInternal.sprx')
+        or not make_fself_and_upload('libScePlayerInvitationDialog.sprx', '/system/common/lib/libScePlayerInvitationDialog.sprx')
+        or not fn_run):
+        fn()
 
 @derive_symbol
+@retry_on_error
 def sceSblServiceMailbox_lr_decryptMultipleSelfBlocks():
     ensure_fselfs(lambda: use_r0gdb_trace(0))
     # set mailbox-related symbols
@@ -852,6 +912,399 @@ def sceSblServiceMailbox_lr_decryptMultipleSelfBlocks():
     except gdb_rpc.DisconnectedException: pass
     return lr - kdata_base
 
+@derive_symbols('copyin', 'copyout')
+@retry_on_error
+def copyin():
+    use_r0gdb_trace(16777216)
+    kdata_base = gdb.ieval('kdata_base')
+    pipebuf = gdb.ieval('(void*)malloc(123)')
+    assert not gdb.ieval('(int)pipe(%d)'%pipebuf)
+    fd1 = gdb.ieval('{int}%d'%pipebuf)
+    fd2 = gdb.ieval('{int}%d'%(pipebuf+4))
+    gdb.ieval('jprog = (void*[1]){0}')
+    trace1 = traces.Trace(r0gdb.trace('do_jprog', '(void*)dlsym(0x2001, "_write")', fd2, pipebuf, 123))
+    trace2 = traces.Trace(r0gdb.trace('do_jprog', '(void*)dlsym(0x2001, "_read")', fd1, pipebuf, 123))
+    candidates1 = [i for i in range(1, len(trace1)) if trace1.is_jump(i-1) and trace1[i].rsp == trace1[i-1].rsp - 8 and trace1[i].rdi == pipebuf and trace1[i].rdx == 123]
+    assert len(candidates1) == 1
+    copyin = trace1[candidates1[0]].rip
+    kernel_buf = trace1[candidates1[0]].rsi
+    candidates2 = [i for i in range(1, len(trace2)) if trace2.is_jump(i-1) and trace2[i].rsp == trace2[i-1].rsp - 8 and trace2[i].rdi == kernel_buf and trace2[i].rsi == pipebuf and trace2[i].rdx == 123]
+    assert len(candidates2) == 1
+    copyout = trace2[candidates2[0]].rip
+    return copyin - kdata_base, copyout - kdata_base
+
+def fetch_logs(cpu):
+    uelf_base = gdb.ieval('uelf_bases[%d]'%cpu)
+    offset = int(os.popen("nm ../uelf/uelf | grep ' log$'").read().split()[0], 16)
+    gdb.execute('set print elements 0')
+    gdb.execute('set print repeats 0')
+    return [int(i, 16) for i in gdb.eval('{void*[512]}%d'%(uelf_base+offset)).strip()[1:-1].split(', ')]
+
+def get_parasites(kdata_base):
+    return sorted({(i - kdata_base, j) for k in map(fetch_logs, range(16)) for i, j in zip(k[::2], k[1::2]) if i})
+
+@derive_symbol
+@retry_on_error
+def syscall_parasites():
+    use_kstuff()
+    init_kstuff()
+    kdata_base = gdb.ieval('kdata_base')
+    ans = get_parasites(kdata_base)
+    assert len(ans) == 3
+    return ans
+
+@derive_symbols('loadSelfSegment_watchpoint', 'loadSelfSegment_epilogue', 'loadSelfSegment_watchpoint_lr', 'decryptSelfBlock_epilogue', 'decryptSelfBlock_watchpoint_lr', 'decryptMultipleSelfBlocks_epilogue', 'decryptMultipleSelfBlocks_watchpoint_lr')
+@retry_on_error
+def loadSelfSegment_watchpoint():
+    ensure_fselfs(lambda: use_r0gdb_trace(1<<26))
+    kdata_base = gdb.ieval('kdata_base')
+    for i in (
+        'sceSblServiceMailbox',
+        'sceSblServiceMailbox_lr_sceSblAuthMgrSmFinalize',
+        'sceSblServiceMailbox_lr_verifyHeader',
+        'sceSblAuthMgrSmIsLoadable2',
+        'sceSblServiceMailbox_lr_loadSelfSegment',
+        'sceSblServiceMailbox_lr_decryptSelfBlock',
+        'sceSblServiceMailbox_lr_decryptMultipleSelfBlocks',
+        'kernel_pmap_store',
+        'mini_syscore_header',
+    ):
+        gdb.ieval('offsets.%s = %s'%(i, ostr(kdata_base + symbols[i])))
+    gdb.ieval('offsets.mmap_self_fix_1_end = (offsets.mmap_self_fix_1_start = %s) + 2'%ostr(kdata_base + symbols['mmap_self_fix_1_start']))
+    gdb.ieval('offsets.mmap_self_fix_2_end = (offsets.mmap_self_fix_2_start = %s) + 2'%ostr(kdata_base + symbols['mmap_self_fix_2_start']))
+    gdb.ieval('do_fself = 95')
+    rt1 = r0gdb.trace('trace_mailbox', '(void*)dlsym(0x2001, "mmap")', 0, 65536, 1, 0x80001, '(int)open("/data/libSceLibcInternal.sprx", 0)', 0)
+    assert not (gdb.ieval('$eflags') & 1)
+    mapping = gdb.ieval('$rax')
+    rt2 = r0gdb.trace('trace_mailbox', '(void*)dlsym(0x2001, "mlock")', mapping, 16384)
+    rt3 = r0gdb.trace('trace_mailbox', '(void*)dlsym(0x2001, "mlock")', mapping, 65536)
+    trace = traces.Trace(rt1+rt2+rt3)
+    use_kstuff()
+    init_kstuff()
+    assert not any(map(any, map(fetch_logs, range(16))))
+    fd = gdb.ieval('(int)open("/data/libSceLibcInternal.sprx", 0)')
+    assert fd >= 0
+    mapping = gdb.ieval('(void*)mmap(0, 65536, 1, 0x80001, %d, 0)'%fd)
+    assert mapping != 2**64-1
+    assert not gdb.ieval('(int)mlock(%d, 16384)'%mapping)
+    assert not gdb.ieval('(int)mlock(%d, 65536)'%mapping)
+    parasites = get_parasites(gdb.ieval('kdata_base'))
+    parasite_set = {kdata_base + i[0] for i in parasites}
+    watchpoints = set()
+    rest = []
+    for i, j in enumerate(('loadSelfSegment', 'decryptSelfBlock', 'decryptMultipleSelfBlocks')):
+        k = trace.find_caller(trace.find_next_rip(0, kdata_base + symbols['sceSblServiceMailbox_lr_'+j] - 5)) + 1
+        while trace.find_next_instr(k) == k + 1: k += 1
+        ps = [i.rip-kdata_base for i in trace[k:trace.find_next_instr(k)] if i.rip in parasite_set]
+        k = trace.find_next_instr(k)
+        watchpoints.add(tuple(ps))
+        lr = trace[k].rip - kdata_base
+        k0 = k
+        while k + 1 < len(trace) and not (trace.is_jump(k) and trace[k+1].rsp == trace[k].rsp + 8):
+            k = trace.find_next_instr(k)
+        while k > k0 and trace[k-1].rsp < trace[k].rsp:
+            k -= 1
+        assert trace[k-1].rsp == trace[k].rsp
+        epilogue = trace[k].rip - kdata_base
+        rest.append(epilogue)
+        rest.append(lr)
+    assert len(watchpoints) == 1
+    return (min(next(iter(watchpoints))),)+tuple(rest)
+
+@derive_symbol
+@retry_on_error
+def fself_parasites():
+    ensure_fselfs(use_kstuff)
+    init_kstuff()
+    kdata_base = gdb.ieval('kdata_base')
+    assert gdb.ieval('(int)dlopen("/data/libScePlayerInvitationDialog.sprx", 0)') > 0
+    fd = gdb.ieval('(int)open("/data/libSceLibcInternal.sprx", 0)')
+    assert fd >= 0
+    mapping = gdb.ieval('(void*)mmap(0, 65536, 1, 0x80001, %d, 0)'%fd)
+    assert mapping != 2**64-1
+    gdb.ieval('{void*}%d'%mapping)
+    assert not gdb.ieval('(int)mlock(%d, 16384)'%mapping)
+    assert not gdb.ieval('(int)mlock(%d, 65536)'%mapping)
+    assert not gdb.ieval('(int)munmap(%d, 65536)'%mapping)
+    assert not gdb.ieval('(int)close(%d)'%fd)
+    ans = get_parasites(kdata_base)
+    assert len(ans) == 10
+    return [(i, j) for i, j in ans if not (j == 10 and (i, 7) in ans)]
+
+def elf_to_flat(data):
+    assert data.startswith(b'\x7fELF') and len(data) >= 64
+    ans = bytearray()
+    phoff = int.from_bytes(data[32:40], 'little')
+    phnum = int.from_bytes(data[56:58], 'little')
+    assert len(data) >= phoff+56*phnum
+    for i in range(phoff, phoff+56*phnum, 56):
+        ptype = int.from_bytes(data[i:i+4], 'little')
+        if ptype != 1: continue
+        offset = int.from_bytes(data[i+8:i+16], 'little')
+        vaddr = int.from_bytes(data[i+16:i+24], 'little')
+        filesz = int.from_bytes(data[i+32:i+40], 'little')
+        memsz = int.from_bytes(data[i+40:i+48], 'little')
+        assert memsz >= filesz
+        assert len(data) >= offset + filesz
+        ans[vaddr:vaddr+filesz] = data[offset:offset+filesz]
+        ans[vaddr+filesz:vaddr+memsz] = bytes(memsz-filesz)
+    return ans
+
+@derive_symbol
+@retry_on_error
+def shellcore_offsets():
+    shellcore = elf_to_flat(dump_self('SceShellCore', '/system/vsh/SceShellCore.elf')[0])
+    shellcore_txt = shellcore.decode('latin-1').replace('\n', '\u010a')
+    def get_offsets(regexp):
+        return [shellcore_txt.find(i) for i in re.compile(regexp).findall(shellcore_txt)]
+    ans = []
+    offset, = get_offsets(r'\x80\x3d....\x01\x75\u010a\x48\x89\xd1\x31\xd2\xe9....\xb8\x01\x00\xe9\x80\xc3\xcc{7}')
+    target_fn = int.from_bytes(shellcore[offset+15:offset+19], 'little', signed=True)+offset+19
+    ans.append((offset+14, '52eb086690'))
+    ans.append((offset+25, (b'\xe8'+(target_fn-offset-30).to_bytes(4, 'little', signed=True)+b'\x58\xc3').hex()))
+    offset, = get_offsets(r'\xcc{7}\x80\x3d....\x01\x75\x0d\x48\x89\xd1\xba\x01\x00\x00\x00\xe9....\xb8\x01\x00\xe9\x80\xc3')
+    target_fn = int.from_bytes(shellcore[offset+25:offset+29], 'little', signed=True)+offset+29
+    ans.append((offset+24, '31c050ebe3'))
+    ans.append((offset, (b'\xe8'+(target_fn-offset-5).to_bytes(4, 'little', signed=True)+b'\x58\xc3').hex()))
+    offset, = get_offsets(r'\x44\x89[\xe0\xe8\xf8]\xff\xc8\x83\xf8\x02\x0f\x83')
+    ans.append((offset+8, 'eb04'))
+    offsets = get_offsets(r'(\xe8....\x85\xc0\x0f\x88....\x49\x8b\x46\x20\x48\xba\x00\xff\x00\xff\x00\xff\x00\xff|\xe8....\x85\xc0\x0f\x84....\x0f\x88....\x49\x0f\x38)')
+    assert len(offsets) == 2
+    for i in offsets:
+        if shellcore[i+8] == 0x88:
+            ans.append((i+7, 'eb04'))
+        else:
+            ans.append((i+13, 'eb04'))
+    offset, = get_offsets(r'(\x41\x39[\xdc\xdd]\x74.\x48\x8d\x3d....|\x3b\x84\x24....\x75.\x31\xc9\xeb.)')
+    if shellcore[offset] == 0x41:
+        ans.append((offset+3, 'eb'))
+    else:
+        ans.append((offset+7, '9090'))
+    offset, = get_offsets(r'\x83\xbb....\x03\x0f\x84')
+    ans.append((offset+7, '90e9'))
+    offset, = get_offsets(r'(\x41\x81[\xfc\xff]\x60\x00\x02\x80\x0f\x85....\x80\x7c\x24.\x00\x74.|\x41\x81[\xfc\xfd]\x60\x00\x02\x80\x0f\x85....\x84\xc0\x74.)')
+    if shellcore[offset+2] == 0xff:
+        ans.append((offset+18, 'eb'))
+    else:
+        ans.append((offset+15, 'eb'))
+    offset, = get_offsets(r'\x83\xfb\x01\x0f\x84....\x83\xfb\x02\x0f\x85....')
+    target = int.from_bytes(shellcore[offset+5:offset+9], 'little', signed=True)+offset+9
+    ans.append((offset+14, (target-offset-18).to_bytes(4, 'little', signed=True).hex()))
+    for offset, data in ans:
+        data = bytes.fromhex(data)
+        shellcore[offset:offset+len(data)] = data
+    offset, = get_offsets(r'\xeb.\x48\x8b\x32\x48\x89\xdf\xe8....\xeb.\x48\x8b\x02\x49\x8b\x37')
+    target = int.from_bytes(shellcore[offset+9:offset+13], 'little', signed=True)+offset+13
+    target2 = int.from_bytes(shellcore[offset+14:offset+15], 'little', signed=True)+offset+15
+    cave1 = shellcore.find(b'\xcc'*14, offset)
+    cave2 = shellcore.find(b'\xcc'*11, cave1+14)
+    ans.append((cave1, (b'\xe8'+(target-cave1-5).to_bytes(4, 'little', signed=True)+b'\x31\xc9\xff\xc1\xe9'+(cave2-cave1-14).to_bytes(4, 'little', signed=True)).hex()))
+    ans.append((cave2, (b'\x83\xf8\x02\x0f\x43\xc1\xe9'+(target2-cave2-11).to_bytes(4, 'little', signed=True)).hex()))
+    ans.append((offset+8, (b'\xe9'+(cave1-offset-13).to_bytes(4, 'little', signed=True)).hex()))
+    return ans
+
+@derive_symbol
+@retry_on_error
+def printf():
+    use_r0gdb_raw()
+    kdata_base = gdb.ieval('kdata_base')
+    # arm the exit syscall
+    gdb.ieval('$pc = {void*}%s'%ostr(kdata_base+symbols['sysents']+56))
+    gdb.ieval('$rdi = {void*}(16+{void*}%s)'%ostr(kdata_base+symbols['allproc']))
+    gdb.ieval('$rsi = $rsp + 8')
+    # singlestep
+    prev_rip = gdb.ieval('$pc')
+    prev_rsp = gdb.ieval('$rsp')
+    while True:
+        gdb.execute('stepi')
+        rip = gdb.ieval('$pc')
+        rsp = gdb.ieval('$rsp')
+        print(hex(rip), hex(rsp))
+        if rsp == prev_rsp - 8 and rip not in range(prev_rip, prev_rip+16): break
+        prev_rip = rip
+        prev_rsp = rsp
+    # we're now at the first printf
+    assert gdb.ieval('$rdi') % 2**64 == (kdata_base + get_kernel()[0].find(b'# process pid=%d, %s calls exit() exit_value=%x.\n\0')) % 2**64
+    return gdb.ieval('$pc') - kdata_base
+
+@derive_symbols(
+    'sceSblServiceMailbox_lr_verifySuperBlock',
+    'sceSblServiceMailbox_lr_sceSblPfsClearKey_1',
+    'sceSblServiceMailbox_lr_sceSblPfsClearKey_2',
+    'sceSblPfsSetKeys',
+    'sceSblServiceCryptAsync',
+)
+@retry_on_error
+def sceSblServiceMailbox_lr_verifySuperBlock():
+    use_kstuff()
+    assert 'void' == gdb.eval('kill_thread()')
+    assert 'void' == gdb.eval('ignore_signals()')
+    assert 'void' == gdb.eval('temp_patch_shellcore(shellcore_patches, n_shellcore_patches, 1)')
+    kdata_base = gdb.ieval('kdata_base')
+    print('Launch a PS4 fake package.')
+    # wait for nmount to get called
+    while True:
+        nmount_args = gdb.ieval('get_nmount_args()')
+        if nmount_args != 2**64-1: break
+        time.sleep(5)
+    n_args = 0
+    fspath = None
+    while True:
+        key = gdb.ieval('{void*}%d'%(nmount_args+n_args*32))
+        if not key: break
+        if gdb.ieval('{unsigned long long}%d'%key) % 2**56 == int.from_bytes(b'fspath', 'little'):
+            fspath = gdb.ieval('{void*}%d'%(nmount_args+n_args*32+16))
+        n_args += 1
+    n_args *= 2
+    # enable debug registers for thread
+    gdb.ieval('{int}(0x100+{void*}(0x3f8+get_thread())) |= 2')
+    # set debug registers
+    assert 'void' == gdb.eval('r0gdb_write_dbreg(0, %d)'%(kdata_base + symbols['sceSblServiceMailbox']))
+    assert 'void' == gdb.eval('r0gdb_write_dbreg(7, 0x401)')
+    assert 'void' == gdb.eval('set_trace()')
+    # call nmount to get verifySuperBlock
+    gdb.ieval('trace_prog = trace_mailbox_for_fpkg')
+    gdb.ieval('p_kekcall = (void*)dlsym(0x2001, "getppid") + 7')
+    def nmount():
+        ans = gdb.ieval('my_nmount(%d, %d, 1)'%(nmount_args, n_args))
+        print('nmount() =', ans)
+        if not ans: # we were given a legit package, ok
+            # unmount, to allow for retry
+            assert not gdb.ieval('(int)kekcall(%d, 0, 0, 0, 0, 0, 22)'%fspath)
+    nmount()
+    assert gdb.ieval('mailbox_n') == 2
+    sceSblServiceMailbox_lr_verifySuperBlock = gdb.ieval('offsets.sceSblServiceMailbox_lr_verifySuperBlock = mailbox_lr[0]')
+    gdb.ieval('mailbox_n = 0')
+    gdb.ieval('n_faked_decrypts = 1')
+    gdb.ieval('mailbox_fakeresp[0] = 1')
+    # call nmount to get sceSblPfsClearKey_{1,2}
+    nmount()
+    assert gdb.ieval('mailbox_n') == 5
+    lrs = [gdb.ieval('mailbox_lr[%d]'%i) for i in range(5)]
+    assert len(set(lrs)) == 4 and lrs[0] == sceSblServiceMailbox_lr_verifySuperBlock and lrs[1] == lrs[4]
+    sceSblServiceMailbox_lr_sceSblPfsClearKey_1 = lrs[2]
+    sceSblServiceMailbox_lr_sceSblPfsClearKey_2 = lrs[3]
+    gdb.ieval('mailbox_n = 0')
+    nmount()
+    # call nmount to get sceSblServiceCrypt caller function
+    assert 'void' == gdb.eval('r0gdb_write_dbreg(1, %d)'%(kdata_base+symbols['printf']))
+    assert 'void' == gdb.eval('r0gdb_write_dbreg(7, 0x405)')
+    assert 'void' == gdb.eval('set_trace()')
+    page1 = gdb.ieval('malloc_locked(16384)')
+    page2 = page1 + 4096
+    page3 = page2 + 4096
+    page4 = page3 + 4096
+    gdb.ieval('mailbox_n = 0')
+    gdb.ieval('trace_prog_after_mailbox = do_dump_at_rip')
+    gdb.ieval('dump_program = (uint64_t[18]){%d, 1, -1, %d, %d, %d, 1, 10, -1, %d, %d, 0}'%(kdata_base+symbols['printf'], page1, page2, kdata_base+symbols['printf'], page1+8, page3))
+    nmount()
+    cache = {}
+    def get(ptr, page, offset):
+        if ptr not in cache:
+            cache[ptr] = gdb.ieval('{void*}%d'%ptr)
+            assert cache[ptr]
+        page_offset = cache[ptr] % 4096
+        assert page_offset + offset + 8 <= 4096
+        return gdb.ieval('{void*}%d'%(page+page_offset+offset))
+    kdata = get_kernel()[0]
+    error_rdi = kdata_base + kdata.find(b'\0[0]%s() line=%d sceSblServiceCryptAsync() failed 0x%x\n\0') + 1
+    assert get(page1, page2, 12*8) == error_rdi
+    error_rsi = kdata_base + kdata.find(b'\0pfs_generate_icv_sub\0') + 1
+    assert get(page1, page2, 11*8) == error_rsi
+    pfs_generate_icv_sub_lr = get(page1+8, page3, 8)
+    # call nmount to get sceSblPfsSetKeys
+    assert 'void' == gdb.eval('r0gdb_write_dbreg(1, %d)'%sceSblServiceMailbox_lr_verifySuperBlock)
+    assert 'void' == gdb.eval('set_trace()')
+    gdb.ieval('dump_program = (uint64_t[7]){%d, 0, 10, -1, %d, %d, 0}'%(sceSblServiceMailbox_lr_verifySuperBlock, page1+16, page4))
+    nmount()
+    sceSblPfsSetKeys_lr = get(page1+16, page4, 8)
+    # get the pointer to pfs_generate_icv_sub & sceSblPfsSetKeys
+    kstack = gdb.ieval('kstack')
+    regs = gdb.ieval('(void*)malloc(sizeof(struct regs))')
+    REGS = '((struct regs*)%d)' % regs
+    gdb.ieval('%s->eflags = 0x102'%REGS)
+    gdb.ieval('%s->rip = %d'%(REGS, pfs_generate_icv_sub_lr-5))
+    gdb.ieval('%s->rsp = %d'%(REGS, kstack))
+    assert 'void' == gdb.eval('(void)run_in_kernel(%d)'%regs)
+    assert gdb.ieval('%s->rsp'%REGS) == kstack - 8
+    pfs_generate_icv_sub = gdb.ieval('%s->rip'%REGS)
+    gdb.ieval('%s->rip = %d'%(REGS, sceSblPfsSetKeys_lr-5))
+    assert 'void' == gdb.eval('(void)run_in_kernel(%d)'%regs)
+    assert gdb.ieval('%s->rsp'%REGS) == kstack - 16
+    sceSblPfsSetKeys = gdb.ieval('%s->rip'%REGS)
+    # trace pfs_generate_icv_sub to find sceSblServiceCryptAsync
+    assert 'void' == gdb.eval('r0gdb_trace(16777216)')
+    gdb.ieval('trace_prog = trace_mailbox_for_fpkg')
+    gdb.ieval('mailbox_n = 0')
+    gdb.ieval('trace_prog_after_mailbox = trace_on_break')
+    assert 'void' == gdb.eval('r0gdb_write_dbreg(1, %d)'%pfs_generate_icv_sub)
+    assert 'void' == gdb.eval('set_trace()')
+    assert 'void' == gdb.eval('r0gdb_trace_reset()')
+    nmount()
+    trace = traces.Trace(r0gdb.get_trace())
+    k = trace.find_next_rip(0, kdata_base + symbols['printf'])
+    for i in range(4):
+        while not (trace.is_jump(k) and trace[k+1].rsp == trace[k].rsp + 8): k -= 1
+        k = trace.find_caller(k)
+    assert trace[k].rsi == 0x138 and trace[trace.find_next_instr(k)].rax == 0
+    sceSblServiceCryptAsync = trace[k+1].rip
+    return (
+        sceSblServiceMailbox_lr_verifySuperBlock-kdata_base,
+        sceSblServiceMailbox_lr_sceSblPfsClearKey_1-kdata_base, 
+        sceSblServiceMailbox_lr_sceSblPfsClearKey_2-kdata_base,
+        sceSblPfsSetKeys-kdata_base,
+        sceSblServiceCryptAsync-kdata_base,
+    )
+
+@derive_symbol
+@retry_on_error
+def sceSblServiceCryptAsync_deref_singleton():
+    use_kstuff()
+    init_kstuff()
+    print('Launch a PS4 fake package.')
+    while True:
+        ans = get_parasites(gdb.ieval('kdata_base'))
+        if ans: break
+        time.sleep(5)
+    assert ans and ans == [(ans[0][0], 0), (ans[0][0], 3)]
+    assert ans[0][0] - symbols['sceSblServiceCryptAsync'] in range(256)
+    return ans[0][0]
+
+@derive_symbol
+@retry_on_error
+def crypt_message_resolve():
+    use_r0gdb_raw()
+    kdata_base = gdb.ieval('kdata_base')
+    gdb.ieval('$pc = '+ostr(kdata_base + symbols['sceSblServiceCryptAsync']))
+    arg = gdb.ieval('{void*}($rdi = $rsp + 8) = $rsp + 8')
+    prev_rip = gdb.ieval('$pc')
+    prev_rsp = gdb.ieval('$rsp')
+    while True:
+        gdb.execute('stepi')
+        rip = gdb.ieval('$pc')
+        rsp = gdb.ieval('$rsp')
+        print(hex(rip), hex(rsp))
+        if rip not in range(prev_rip, prev_rip+16) and rsp == prev_rsp - 8: # function call
+            if gdb.ieval('$rdi') % 2**64 == arg % 2**64 and gdb.ieval('$rsi') == 0xffffffdb:
+                return rip - kdata_base
+            gdb.ieval('$rax = 0')
+            gdb.ieval('$pc = '+ostr(kdata_base + symbols['wrmsr_ret'] + 2))
+        prev_rip = rip
+        prev_rsp = rsp
+
+##These are not so important, just ignore for now
+#@derive_symbol
+#@retry_on_error
+#def unsorted_parasites():
+#    use_kstuff()
+#    init_kstuff()
+#    print('Launch and close a PS4 fake package. Press Enter when the game is fully closed.')
+#    input('> ')
+#    time.sleep(10)
+#    kdata_base = gdb.ieval('kdata_base')
+#    ans = get_parasites(kdata_base)
+#    assert False, ans
+
 print(len(symbols), 'offsets currently known')
 print(sum(sum(j not in symbols for j in i[1]) if isinstance(i, tuple) else (i.__name__ not in symbols) for i in derivations), 'offsets to be found')
 
@@ -866,9 +1319,12 @@ for i in derivations:
             assert len(value) == len(names)
             for i, j in zip(names, value):
                 set_symbol(i, j)
+        available_symbols |= set(names)
     elif i.__name__ not in symbols:
         print('Probing offset `%s`'%i.__name__)
         try: value = i()
         except Exception:
             raise Exception("failed to derive `%s`, see above why"%i.__name__)
         set_symbol(i.__name__, value)
+    else:
+        available_symbols.add(i.__name__)

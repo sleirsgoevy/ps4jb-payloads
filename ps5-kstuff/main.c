@@ -5,6 +5,8 @@
 #include <signal.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include "../prosper0gdb/r0gdb.h"
 #include "../prosper0gdb/offsets.h"
 #include "../gdb_stub/dbg.h"
@@ -180,8 +182,10 @@ void* load_kelf(void* ehdr, const char** symbols, uint64_t* values, void** base,
                         sym[1] = value = values[i];
                     else if(symbols[i][0] == '.' && !strcmp(symbols[i]+1, name))
                         value = values[i];
+#ifndef FIRMWARE_PORTING
                 if(!value)
                     die();
+#endif
             }
             if((uint32_t)oia[1] == 6 && oia[2])
                 die();
@@ -366,6 +370,57 @@ struct shellcore_patch
     size_t sz;
 };
 
+static struct shellcore_patch shellcore_patches_300[] = {
+    {0x9d1cae, "\x52\xeb\x08\x66\x90", 5},
+    {0x9d1cb9, "\xe8\x02\xfc\xff\xff\x58\xc3", 7},
+    {0x9d18b1, "\x31\xc0\x50\xeb\xe3", 5},
+    {0x9d1899, "\xe8\x22\x00\x00\x00\x58\xc3", 7},
+    {0x4dcfb4, "\xeb\x04", 2},
+    {0x2569b1, "\xeb\x04", 2},
+    {0x25af5a, "\xeb\x04", 2},
+    {0x4fafca, "\x90\x90", 2},
+    {0x4e335d, "\x90\xe9", 2},
+    {0x4fbb63, "\xeb", 1},
+    {0x4ff329, "\xd0\x00\x00\x00", 4},
+    {0x1968c1, "\xe8\x4a\xde\x42\x00\x31\xc9\xff\xc1\xe9\x12\x01\x00\x00", 14},
+    {0x1969e1, "\x83\xf8\x02\x0f\x43\xc1\xe9\xff\xfb\xff\xff", 11},
+    {0x1965c9, "\xe9\xf3\x02\x00\x00", 5},
+};
+
+static struct shellcore_patch shellcore_patches_320[] = {
+    {0x9d1f9e, "\x52\xeb\x08\x66\x90", 5},
+    {0x9d1fa9, "\xe8\x02\xfc\xff\xff\x58\xc3", 7},
+    {0x9d1ba1, "\x31\xc0\x50\xeb\xe3", 5},
+    {0x9d1b89, "\xe8\x22\x00\x00\x00\x58\xc3", 7},
+    {0x4dd284, "\xeb\x04", 2},
+    {0x256aa1, "\xeb\x04", 2},
+    {0x25b04a, "\xeb\x04", 2},
+    {0x4fb29a, "\x90\x90", 2},
+    {0x4e362d, "\x90\xe9", 2},
+    {0x4fbe33, "\xeb", 1},
+    {0x4ff5f9, "\xd0\x00\x00\x00", 4},
+    {0x1968c1, "\xe8\x3a\xe1\x42\x00\x31\xc9\xff\xc1\xe9\x12\x01\x00\x00", 14},
+    {0x1969e1, "\x83\xf8\x02\x0f\x43\xc1\xe9\xff\xfb\xff\xff", 11},
+    {0x1965c9, "\xe9\xf3\x02\x00\x00", 5},
+};
+
+static struct shellcore_patch shellcore_patches_321[] = {
+    {0x9d1f9e, "\x52\xeb\x08\x66\x90", 5},
+    {0x9d1fa9, "\xe8\x02\xfc\xff\xff\x58\xc3", 7},
+    {0x9d1ba1, "\x31\xc0\x50\xeb\xe3", 5},
+    {0x9d1b89, "\xe8\x22\x00\x00\x00\x58\xc3", 7},
+    {0x4dd284, "\xeb\x04", 2},
+    {0x256aa1, "\xeb\x04", 2},
+    {0x25b04a, "\xeb\x04", 2},
+    {0x4fb29a, "\x90\x90", 2},
+    {0x4e362d, "\x90\xe9", 2},
+    {0x4fbe33, "\xeb", 1},
+    {0x4ff5f9, "\xd0\x00\x00\x00", 4},
+    {0x1968c1, "\xe8\x3a\xe1\x42\x00\x31\xc9\xff\xc1\xe9\x12\x01\x00\x00", 14},
+    {0x1969e1, "\x83\xf8\x02\x0f\x43\xc1\xe9\xff\xfb\xff\xff", 11},
+    {0x1965c9, "\xe9\xf3\x02\x00\x00", 5},
+};
+
 static struct shellcore_patch shellcore_patches_403[] = {
     {0x974fee, "\x52\xeb\x08\x66\x90", 5}, //push rdx; jmp 0x974ff9; 2-byte nop
     {0x974ff9, "\xe8\xd2\xfb\xff\xff\x58\xc3", 7}, //call 0x974bd0; pop rax; ret
@@ -373,6 +428,7 @@ static struct shellcore_patch shellcore_patches_403[] = {
     {0x974ba9, "\xe8\x22\x00\x00\x00\x58\xc3", 7}, //call 0x974bd0; pop rax; ret
     {0x5307f9, "\xeb\x04", 2}, //jmp 0x5307ff
     {0x26f35c, "\xeb\x04", 2}, //jmp 0x26f362
+    {0x26f76c, "\xeb\x04", 2}, //jmp 0x26f772
     {0x54e1f0, "\xeb", 1}, //jmp (destination unchanged)
     {0x536e1d, "\x90\xe9", 2}, //nop; jmp (destination unchanged)
     {0x54db8f, "\xeb", 1}, //jmp (destination unchanged)
@@ -416,11 +472,62 @@ static struct shellcore_patch shellcore_patches_451[] = {
 
 extern char _start[];
 
-static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches, uint64_t* eh_frame_offset)
+static void relocate_shellcore_patches(struct shellcore_patch* patches, size_t n_patches)
 {
-#define FW(x, eh_frame)\
+    static uint64_t start_nonreloc = (uint64_t)_start;
+    uint64_t start = (uint64_t)_start;
+    for(size_t i = 0; i < n_patches; i++)
+        patches[i].data += start - start_nonreloc;
+}
+
+uint64_t get_eh_frame_offset(const char* path)
+{
+    int fd = open(path, O_RDONLY);
+    if(!fd)
+        return 0;
+    unsigned long long shit[4];
+    if(read(fd, shit, sizeof(shit)) != sizeof(shit))
+    {
+        close(fd);
+        return 0;
+    }
+    off_t o2 = 0x20*((shit[3]&0xffff)+1);
+    lseek(fd, o2, SEEK_SET);
+    unsigned long long ehdr[8];
+    if(read(fd, ehdr, sizeof(ehdr)) != sizeof(ehdr))
+    {
+        close(fd);
+        return 0;
+    }
+    off_t phdr_offset = o2 + ehdr[4];
+    int nphdr = ehdr[7] & 0xffff;
+    unsigned long long eh_frame = 0;
+    lseek(fd, phdr_offset, SEEK_SET);
+    for(int i = 0; i < nphdr; i++)
+    {
+        unsigned long long phdr[7];
+        if(read(fd, phdr, sizeof(phdr)) != sizeof(phdr))
+        {
+            close(fd);
+            return 0;
+        }
+        unsigned long long addr = phdr[2];
+        int ptype = phdr[0] & 0xffffffff;
+        if(ptype == 0x6474e550)
+            eh_frame = addr;
+    }
+    close(fd);
+    return eh_frame;
+}
+
+static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches)
+{
+#ifdef FIRMWARE_PORTING
+    *n_patches = 1;
+    return 0;
+#endif
+#define FW(x)\
     case 0x ## x:\
-        *eh_frame_offset = eh_frame;\
         *n_patches = sizeof(shellcore_patches_ ## x) / sizeof(*shellcore_patches_ ## x);\
         patches = shellcore_patches_ ## x;\
         break
@@ -431,18 +538,18 @@ static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches, ui
     struct shellcore_patch* patches;
     switch(ver)
     {
-    FW(403, 0x13c0000);
-    FW(450, 0x13cc000);
-    FW(451, 0x13cc000);
+    FW(300);
+    FW(320);
+    FW(321);
+    FW(403);
+    FW(450);
+    FW(451);
     default:
         *n_patches = 1;
         return 0;
     }
 #undef FW
-    static uint64_t start_nonreloc = (uint64_t)_start;
-    uint64_t start = (uint64_t)_start;
-    for(size_t i = 0; i < *n_patches; i++)
-        patches[i].data += start - start_nonreloc;
+    relocate_shellcore_patches(patches, *n_patches);
     return patches;
 }
 
@@ -469,10 +576,106 @@ static void patch_shellcore(const struct shellcore_patch* patches, size_t n_patc
 
 void patch_app_db(void);
 
-static struct PARASITES(13) parasites_403 = {
+#ifdef FIRMWARE_PORTING
+static struct PARASITES(100) parasites_empty = {};
+#endif
+
+static struct PARASITES(12) parasites_300 = {
     .lim_syscall = 3,
-    .lim_fself = 11,
-    .lim_total = 13,
+    .lim_fself = 12,
+    .lim_total = 12,
+    .parasites = {
+        /* syscall parasites */
+        {-0x7e96ad, RDI},
+        {-0x38214c, RSI},
+        {-0x38210c, RSI},
+        /* fself parasites */
+        {-0x970280, RDI},
+        {-0x2c922a, RAX},
+        {-0x2c90f0, RAX},
+        {-0x2c8e0e, RAX},
+        {-0x2c8cc6, R10},
+        {-0x2c8b8d, RAX},
+        {-0x2c881e, RDX},
+        {-0x2c8812, RCX},
+        {-0x2c86a6, RAX},
+        /* unsorted parasites */
+    }
+};
+
+static struct PARASITES(12) parasites_310 = {
+    .lim_syscall = 3,
+    .lim_fself = 12,
+    .lim_total = 12,
+    .parasites = {
+        /* syscall parasites */
+        {-0x7e966d, RDI},
+        {-0x38210c, RSI},
+        {-0x3820cc, RSI},
+        /* fself parasites */
+        {-0x970280, RDI},
+        {-0x2c91ea, RAX},
+        {-0x2c90b0, RAX},
+        {-0x2c8dce, RAX},
+        {-0x2c8c86, R10},
+        {-0x2c8b4d, RAX},
+        {-0x2c87de, RDX},
+        {-0x2c87d2, RCX},
+        {-0x2c8666, RAX},
+        /* unsorted parasites */
+    }
+};
+
+static struct PARASITES(12) parasites_320 = {
+    .lim_syscall = 3,
+    .lim_fself = 12,
+    .lim_total = 12,
+    .parasites = {
+        /* syscall parasites */
+        {-0x7e931d, RDI},
+        {-0x381dbc, RSI},
+        {-0x381d7c, RSI},
+        /* fself parasites */
+        {-0x96ff40, RDI},
+        {-0x2c8e9a, RAX},
+        {-0x2c8d60, RAX},
+        {-0x2c8a7e, RAX},
+        {-0x2c8936, R10},
+        {-0x2c87fd, RAX},
+        {-0x2c848e, RDX},
+        {-0x2c8482, RCX},
+        {-0x2c8316, RAX},
+        /* unsorted parasites */
+    }
+};
+
+static struct PARASITES(12) parasites_321 = {
+    .lim_syscall = 3,
+    .lim_fself = 12,
+    .lim_total = 12,
+    .parasites = {
+        /* syscall parasites */
+        {-0x7e931d, RDI},
+        {-0x381dbc, RSI},
+        {-0x381d7c, RSI},
+        /* fself parasites */
+        {-0x96ff40, RDI},
+        {-0x2c8e9a, RAX},
+        {-0x2c8d60, RAX},
+        {-0x2c8a7e, RAX},
+        {-0x2c8936, R10},
+        {-0x2c87fd, RAX},
+        {-0x2c848e, RDX},
+        {-0x2c8482, RCX},
+        {-0x2c8316, RAX},
+        /* unsorted parasites */
+    }
+};
+
+static struct PARASITES(14) parasites_403 = {
+    .lim_syscall = 3,
+    .lim_fself = 12,
+    .lim_total = 14,
     .parasites = {
         /* syscall parasites */
         {-0x80284d, RDI},
@@ -484,6 +687,7 @@ static struct PARASITES(13) parasites_403 = {
         {-0x2cd150, RAX},
         {-0x2cce73, RAX},
         {-0x2ccbfd, RAX},
+        {-0x2cc88e, RDX},
         {-0x2cc882, RCX},
         {-0x990b10, RDI},
         {-0x2ccd36, R10},
@@ -493,10 +697,10 @@ static struct PARASITES(13) parasites_403 = {
     }
 };
 
-static struct PARASITES(13) parasites_450 = {
+static struct PARASITES(14) parasites_450 = {
     .lim_syscall = 3,
-    .lim_fself = 11,
-    .lim_total = 13,
+    .lim_fself = 12,
+    .lim_total = 14,
     .parasites = {
         /* syscall parasites */
         {-0x80281d, RDI},
@@ -508,6 +712,7 @@ static struct PARASITES(13) parasites_450 = {
         {-0x2ccfa0, RAX},
         {-0x2cccc3, RAX},
         {-0x2cca4d, RAX},
+        {-0x2cc6de, RDX},
         {-0x2cc6d2, RCX},
         {-0x990b10, RDI},
         {-0x2ccb86, R10},
@@ -517,10 +722,10 @@ static struct PARASITES(13) parasites_450 = {
     }
 };
 
-static struct PARASITES(13) parasites_451 = {
+static struct PARASITES(14) parasites_451 = {
     .lim_syscall = 3,
-    .lim_fself = 11,
-    .lim_total = 13,
+    .lim_fself = 12,
+    .lim_total = 14,
     .parasites = {
         /* syscall parasites */
         {-0x80281d, RDI},
@@ -532,6 +737,7 @@ static struct PARASITES(13) parasites_451 = {
         {-0x2ccc00, RAX},
         {-0x2cc923, RAX},
         {-0x2cc6ad, RAX},
+        {-0x2cc33e, RDX},
         {-0x2cc332, RCX},
         {-0x990b10, RDI},
         {-0x2cc7e6, R10},
@@ -549,6 +755,19 @@ static struct parasite_desc* get_parasites(size_t* desc_size)
     uint32_t ver = buf[9] >> 16;
     switch(ver)
     {
+#ifndef FIRMWARE_PORTING
+    case 0x300:
+        *desc_size = sizeof(parasites_300);
+        return (void*)&parasites_300;
+    case 0x310:
+        *desc_size = sizeof(parasites_310);
+        return (void*)&parasites_310;
+    case 0x320:
+        *desc_size = sizeof(parasites_320);
+        return (void*)&parasites_320;
+    case 0x321:
+        *desc_size = sizeof(parasites_321);
+        return (void*)&parasites_321;
     case 0x403:
         *desc_size = sizeof(parasites_403);
         return (void*)&parasites_403;
@@ -558,7 +777,13 @@ static struct parasite_desc* get_parasites(size_t* desc_size)
     case 0x451:
         *desc_size = sizeof(parasites_451);
         return (void*)&parasites_451;
-    default: return 0;
+    default:
+        return 0;
+#else
+    default:
+        *desc_size = sizeof(parasites_empty);
+        return (void*)&parasites_empty;
+#endif
     }
 }
 
@@ -566,8 +791,10 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
     if(r0gdb_init(ds, a, b, c, d))
     {
-        notify("your firmware is not supported (prosper0gdb");
+#ifndef FIRMWARE_PORTING
+        notify("your firmware is not supported (prosper0gdb)");
         return 1;
+#endif
     }
     size_t desc_size = 0;
     struct parasite_desc* desc = get_parasites(&desc_size);
@@ -577,13 +804,20 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         return 1;
     }
     size_t n_shellcore_patches;
-    uint64_t shellcore_eh_frame_offset;
-    const struct shellcore_patch* shellcore_patches = get_shellcore_patches(&n_shellcore_patches, &shellcore_eh_frame_offset);
+    uint64_t shellcore_eh_frame_offset = get_eh_frame_offset("/system/vsh/SceShellCore.elf");
+    const struct shellcore_patch* shellcore_patches = get_shellcore_patches(&n_shellcore_patches);
     if(n_shellcore_patches && !shellcore_patches)
     {
+#ifdef FIRMWARE_PORTING
+        n_shellcore_patches = 0;
+#else
         notify("your firmware is not supported (shellcore)");
         return 1;
+#endif
     }
+#ifdef FIRMWARE_PORTING
+    dbg_enter();
+#endif
     uint64_t percpu_ist4[NCPUS];
     for(int cpu = 0; cpu < NCPUS; cpu++)
         copyout(&percpu_ist4[cpu], TSS(cpu)+28+4*8, 8);
@@ -593,7 +827,9 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     uint64_t int13_handler;
     copyout(&int13_handler, IDT+16*13, 2);
     copyout((char*)&int13_handler + 2, IDT+16*13+6, 6);
+#ifndef FIRMWARE_PORTING
     dbg_enter();
+#endif
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"allocating kernel memory... ", (uintptr_t)28);
     for(int i = 0; i < 0x300; i += 2)
         r0gdb_kmalloc(0x100);
@@ -751,12 +987,16 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     struct sigaction sa;
     sigaction(SIGBUS, 0, &sa);
     sigaction(SIGTRAP, &sa, 0);
+#ifndef FIRMWARE_PORTING
     sigaction(SIGPIPE, &sa, 0);
+#endif
     copyin(IDT+16*9+5, "\x8e", 1);
     copyin(IDT+16*179+5, "\x8e", 1);
     patch_shellcore(shellcore_patches, n_shellcore_patches, shellcore_eh_frame_offset);
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\npatching app.db... ", (uintptr_t)24);
+#ifndef FIRMWARE_PORTING
     patch_app_db();
+#endif
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
 #ifndef DEBUG
     notify("ps5-kstuff successfully loaded");

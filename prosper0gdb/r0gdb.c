@@ -1148,7 +1148,6 @@ static void very_kek(uint64_t* regs)
         kekv2 = restore[1];
         regs[3] += 16;
     }
-#endif
     if(regs[0] == offsets.decryptSelfBlock_watchpoint)
     {
         uint64_t backup[10];
@@ -1168,6 +1167,7 @@ static void very_kek(uint64_t* regs)
             kek3 += 1;
         }
     }
+#endif
     if(regs[0] == offsets.decryptSelfBlock_epilogue)
     {
         uint64_t restore[6];
@@ -1469,6 +1469,8 @@ static void trace_mailbox_for_fpkg(uint64_t* regs)
 
 static char* panic_message;
 
+//panic is commonly inlined in sonybsd, there is no reason to trace it
+#if 0
 static void trace_panic(uint64_t* regs)
 {
     SKIP_SCHEDULER
@@ -1481,6 +1483,7 @@ static void trace_panic(uint64_t* regs)
         kmemcpy((void*)regs[3], regs, 40);
     }
 }
+#endif
 
 static void trace_cryptasync(uint64_t* regs)
 {
