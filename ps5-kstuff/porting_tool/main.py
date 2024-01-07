@@ -217,7 +217,7 @@ def mini_syscore_header():
     kernel, kdata_base = get_kernel()
     gdb.use_r0gdb(R0GDB_FLAGS)
     try: remote_fd = gdb.ieval('(int)open("/mini-syscore.elf", 0)')
-    except gdb.DisconnectedException:
+    except gdb_rpc.DisconnectedException:
         message = ('''\
 You probably have wrong OFFSET_KERNEL_DATA_BASE_ROOTVNODE in the WebKit exploit. Fix this before proceeding.
 The correct offset is probably '''+hex(symbols['rootvnode'])).split('\n')
