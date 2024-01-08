@@ -387,6 +387,23 @@ static struct shellcore_patch shellcore_patches_300[] = {
     {0x1965c9, "\xe9\xf3\x02\x00\x00", 5},
 };
 
+static struct shellcore_patch shellcore_patches_310[] = {
+    {0x9d1cee, "\x52\xeb\x08\x66\x90", 5},
+    {0x9d1cf9, "\xe8\x02\xfc\xff\xff\x58\xc3", 7},
+    {0x9d18f1, "\x31\xc0\x50\xeb\xe3", 5},
+    {0x9d18d9, "\xe8\x22\x00\x00\x00\x58\xc3", 7},
+    {0x4dcff4, "\xeb\x04", 2},
+    {0x2569f1, "\xeb\x04", 2},
+    {0x25af9a, "\xeb\x04", 2},
+    {0x4fb00a, "\x90\x90", 2},
+    {0x4e339d, "\x90\xe9", 2},
+    {0x4fbba3, "\xeb", 1},
+    {0x4ff369, "\xd0\x00\x00\x00", 4},
+    {0x1968c1, "\xe8\x8a\xde\x42\x00\x31\xc9\xff\xc1\xe9\x12\x01\x00\x00", 14},
+    {0x1969e1, "\x83\xf8\x02\x0f\x43\xc1\xe9\xff\xfb\xff\xff", 11},
+    {0x1965c9, "\xe9\xf3\x02\x00\x00", 5},
+};
+
 static struct shellcore_patch shellcore_patches_320[] = {
     {0x9d1f9e, "\x52\xeb\x08\x66\x90", 5},
     {0x9d1fa9, "\xe8\x02\xfc\xff\xff\x58\xc3", 7},
@@ -419,6 +436,40 @@ static struct shellcore_patch shellcore_patches_321[] = {
     {0x1968c1, "\xe8\x3a\xe1\x42\x00\x31\xc9\xff\xc1\xe9\x12\x01\x00\x00", 14},
     {0x1969e1, "\x83\xf8\x02\x0f\x43\xc1\xe9\xff\xfb\xff\xff", 11},
     {0x1965c9, "\xe9\xf3\x02\x00\x00", 5},
+};
+
+static struct shellcore_patch shellcore_patches_400[] = {
+    {0x974fee, "\x52\xeb\x08\x66\x90", 5},
+    {0x974ff9, "\xe8\xd2\xfb\xff\xff\x58\xc3", 7},
+    {0x974bc1, "\x31\xc0\x50\xeb\xe3", 5},
+    {0x974ba9, "\xe8\x22\x00\x00\x00\x58\xc3", 7},
+    {0x5307f9, "\xeb\x04", 2},
+    {0x26f35c, "\xeb\x04", 2},
+    {0x26f76c, "\xeb\x04", 2},
+    {0x54e1f0, "\xeb", 1},
+    {0x536e1d, "\x90\xe9", 2},
+    {0x54db8f, "\xeb", 1},
+    {0x55137a, "\xc8\x00\x00\x00", 4},
+    {0x1a12d1, "\xe8\xea\x88\x47\x00\x31\xc9\xff\xc1\xe9\xf4\x02\x00\x00", 14},
+    {0x1a15d3, "\x83\xf8\x02\x0f\x43\xc1\xe9\x29\xfa\xff\xff", 11},
+    {0x1a0fe5, "\xe9\xe7\x02\x00\x00", 5},
+};
+
+static struct shellcore_patch shellcore_patches_402[] = {
+    {0x974fee, "\x52\xeb\x08\x66\x90", 5},
+    {0x974ff9, "\xe8\xd2\xfb\xff\xff\x58\xc3", 7},
+    {0x974bc1, "\x31\xc0\x50\xeb\xe3", 5},
+    {0x974ba9, "\xe8\x22\x00\x00\x00\x58\xc3", 7},
+    {0x5307f9, "\xeb\x04", 2},
+    {0x26f35c, "\xeb\x04", 2},
+    {0x26f76c, "\xeb\x04", 2},
+    {0x54e1f0, "\xeb", 1},
+    {0x536e1d, "\x90\xe9", 2},
+    {0x54db8f, "\xeb", 1},
+    {0x55137a, "\xc8\x00\x00\x00", 4},
+    {0x1a12d1, "\xe8\xea\x88\x47\x00\x31\xc9\xff\xc1\xe9\xf4\x02\x00\x00", 14},
+    {0x1a15d3, "\x83\xf8\x02\x0f\x43\xc1\xe9\x29\xfa\xff\xff", 11},
+    {0x1a0fe5, "\xe9\xe7\x02\x00\x00", 5},
 };
 
 static struct shellcore_patch shellcore_patches_403[] = {
@@ -539,8 +590,11 @@ static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches)
     switch(ver)
     {
     FW(300);
+    FW(310);
     FW(320);
     FW(321);
+    FW(400);
+    FW(402);
     FW(403);
     FW(450);
     FW(451);
@@ -672,6 +726,52 @@ static struct PARASITES(12) parasites_321 = {
     }
 };
 
+static struct PARASITES(12) parasites_400 = {
+    .lim_syscall = 3,
+    .lim_fself = 12,
+    .lim_total = 12,
+    .parasites = {
+        /* syscall parasites */
+        {-0x80284d, RDI},
+        {-0x388a8c, RSI},
+        {-0x388a4c, RSI},
+        /* fself parasites */
+        {-0x990b10, RDI},
+        {-0x2cd36a, RAX},
+        {-0x2cd230, RAX},
+        {-0x2ccf53, RAX},
+        {-0x2cce16, R10},
+        {-0x2cccdd, RAX},
+        {-0x2cc96e, RDX},
+        {-0x2cc962, RCX},
+        {-0x2cc7f6, RAX},
+        /* unsorted parasites */
+    }
+};
+
+static struct PARASITES(12) parasites_402 = {
+    .lim_syscall = 3,
+    .lim_fself = 12,
+    .lim_total = 12,
+    .parasites = {
+        /* syscall parasites */
+        {-0x80284d, RDI},
+        {-0x388a3c, RSI},
+        {-0x3889fc, RSI},
+        /* fself parasites */
+        {-0x990b10, RDI},
+        {-0x2cd31a, RAX},
+        {-0x2cd1e0, RAX},
+        {-0x2ccf03, RAX},
+        {-0x2ccdc6, R10},
+        {-0x2ccc8d, RAX},
+        {-0x2cc91e, RDX},
+        {-0x2cc912, RCX},
+        {-0x2cc7a6, RAX},
+        /* unsorted parasites */
+    }
+};
+
 static struct PARASITES(14) parasites_403 = {
     .lim_syscall = 3,
     .lim_fself = 12,
@@ -768,6 +868,12 @@ static struct parasite_desc* get_parasites(size_t* desc_size)
     case 0x321:
         *desc_size = sizeof(parasites_321);
         return (void*)&parasites_321;
+    case 0x400:
+        *desc_size = sizeof(parasites_400);
+        return (void*)&parasites_400;
+    case 0x402:
+        *desc_size = sizeof(parasites_402);
+        return (void*)&parasites_402;
     case 0x403:
         *desc_size = sizeof(parasites_403);
         return (void*)&parasites_403;
