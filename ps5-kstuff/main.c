@@ -455,6 +455,23 @@ static struct shellcore_patch shellcore_patches_400[] = {
     {0x1a0fe5, "\xe9\xe7\x02\x00\x00", 5},
 };
 
+static struct shellcore_patch shellcore_patches_402[] = {
+    {0x974fee, "\x52\xeb\x08\x66\x90", 5},
+    {0x974ff9, "\xe8\xd2\xfb\xff\xff\x58\xc3", 7},
+    {0x974bc1, "\x31\xc0\x50\xeb\xe3", 5},
+    {0x974ba9, "\xe8\x22\x00\x00\x00\x58\xc3", 7},
+    {0x5307f9, "\xeb\x04", 2},
+    {0x26f35c, "\xeb\x04", 2},
+    {0x26f76c, "\xeb\x04", 2},
+    {0x54e1f0, "\xeb", 1},
+    {0x536e1d, "\x90\xe9", 2},
+    {0x54db8f, "\xeb", 1},
+    {0x55137a, "\xc8\x00\x00\x00", 4},
+    {0x1a12d1, "\xe8\xea\x88\x47\x00\x31\xc9\xff\xc1\xe9\xf4\x02\x00\x00", 14},
+    {0x1a15d3, "\x83\xf8\x02\x0f\x43\xc1\xe9\x29\xfa\xff\xff", 11},
+    {0x1a0fe5, "\xe9\xe7\x02\x00\x00", 5},
+};
+
 static struct shellcore_patch shellcore_patches_403[] = {
     {0x974fee, "\x52\xeb\x08\x66\x90", 5}, //push rdx; jmp 0x974ff9; 2-byte nop
     {0x974ff9, "\xe8\xd2\xfb\xff\xff\x58\xc3", 7}, //call 0x974bd0; pop rax; ret
@@ -577,6 +594,7 @@ static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches)
     FW(320);
     FW(321);
     FW(400);
+    FW(402);
     FW(403);
     FW(450);
     FW(451);
@@ -731,6 +749,29 @@ static struct PARASITES(12) parasites_400 = {
     }
 };
 
+static struct PARASITES(12) parasites_402 = {
+    .lim_syscall = 3,
+    .lim_fself = 12,
+    .lim_total = 12,
+    .parasites = {
+        /* syscall parasites */
+        {-0x80284d, RDI},
+        {-0x388a3c, RSI},
+        {-0x3889fc, RSI},
+        /* fself parasites */
+        {-0x990b10, RDI},
+        {-0x2cd31a, RAX},
+        {-0x2cd1e0, RAX},
+        {-0x2ccf03, RAX},
+        {-0x2ccdc6, R10},
+        {-0x2ccc8d, RAX},
+        {-0x2cc91e, RDX},
+        {-0x2cc912, RCX},
+        {-0x2cc7a6, RAX},
+        /* unsorted parasites */
+    }
+};
+
 static struct PARASITES(14) parasites_403 = {
     .lim_syscall = 3,
     .lim_fself = 12,
@@ -830,6 +871,9 @@ static struct parasite_desc* get_parasites(size_t* desc_size)
     case 0x400:
         *desc_size = sizeof(parasites_400);
         return (void*)&parasites_400;
+    case 0x402:
+        *desc_size = sizeof(parasites_402);
+        return (void*)&parasites_402;
     case 0x403:
         *desc_size = sizeof(parasites_403);
         return (void*)&parasites_403;
