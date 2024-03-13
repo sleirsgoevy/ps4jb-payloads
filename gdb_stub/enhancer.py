@@ -163,7 +163,7 @@ for i in range(nphdr):
             inmem_sections.append((addr + filesz, nsections))
             section(next_name('.bss'), 8, s_flags, addr + filesz, 0, memsz - filesz, 0, 0, 0)
     elif kind == 2: # PT_DYNAMIC
-        dynamic = (offset, filesz)
+        dynamic = (offset, filesz, addr)
     elif kind == 0x6474e550: # GNU_EH_FRAME
         eh_frame_hdr = (addr, offset, filesz)
     elif kind == 0x61000000: # SCE_DYNLIBDATA
@@ -182,8 +182,8 @@ def guess_section(addr, sections=inmem_sections):
             h = m
         else:
             l = m
-    if l >= 0: return sections[l]
-    return 0
+    if l >= 0: return sections[l], l+1
+    return 0, 0
 
 dynsym = None
 dynstr = None
@@ -304,7 +304,7 @@ def ef_parse(data, off, limit):
     return off
 
 if dynamic:
-    section('.dynamic', 6, 0, 0, dynamic[0], dynamic[1], 0, 0, 0)
+    section('.dynamic', 6, 0, dynamic[2], dynamic[0], dynamic[1], 0, 0, 0)
     assert dynamic[1] % 16 == 0
     dynsym_addr = None
     dynsym_sz = None
@@ -338,7 +338,10 @@ if dynamic:
         elif tag == 4:
             hash_addr = val
     if dynsym_addr != None and dynsym_sz == None and hash_addr != None:
-        dynsym_sz = 24 * int.from_bytes(sce_dynlibdata[hash_addr:hash_addr+4], 'little')
+        n_buckets = int.from_bytes(sce_dynlibdata[hash_addr:hash_addr+4], 'little')
+        n_chains = int.from_bytes(sce_dynlibdata[hash_addr+4:hash_addr+8], 'little')
+        n_symbols = max(int.from_bytes(sce_dynlibdata[hash_addr+4*i:hash_addr+4*i+4], 'little') for i in range(2, 2+n_buckets+n_chains))
+        dynsym_sz = 24 * n_symbols
     have_dynstr = dynstr_addr != None and dynstr_sz != None
     dynsym_sect = 0
     got_slots = None
@@ -365,7 +368,7 @@ if dynamic:
 if eh_frame_hdr != None:
     ef_start, ef_some_entry = efh_parse(data, eh_frame_hdr[1], eh_frame_hdr[1] + eh_frame_hdr[2], eh_frame_hdr[0] - eh_frame_hdr[1])
     if ef_some_entry >= 0:
-        ef_segment = guess_section(ef_start, inmem_segments)
+        ef_segment = guess_section(ef_start, inmem_segments)[0]
         assert all(i in range(ef_segment[0], ef_segment[0]+ef_segment[2]) for i in (ef_start, ef_some_entry))
         ef_end = ef_parse(data, ef_some_entry + ef_segment[1] - ef_segment[0], ef_segment[1] + ef_segment[2])
         ef_length = ef_end - (ef_start + ef_segment[1] - ef_segment[0])
