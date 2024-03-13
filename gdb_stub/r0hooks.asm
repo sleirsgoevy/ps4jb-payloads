@@ -73,6 +73,8 @@ push r12
 push r13
 push r14
 push r15
+mov rax, qword [gs:0]
+push rax ; curthread
 
 cmpxchg_loop:
 cli
@@ -103,6 +105,7 @@ bts rax, 16
 mov cr0, rax
 sti
 
+pop rax
 pop r15
 pop r14
 pop r13

@@ -82,6 +82,7 @@ static void install_code(void)
 
 struct mailbox
 {
+    uint64_t curthread;
     uint64_t r15;
     uint64_t r14;
     uint64_t r13;
@@ -167,6 +168,8 @@ static void ring0_mailbox_thread(void* ptr)
                 .cs = data.cs,
                 .eflags = data.rflags & ~256ull,
                 .ss = data.cs,
+                .fs = data.curthread >> 32,
+                .gs = (uint32_t)data.curthread,
             },
         };
         if(data.int_no == 13)
