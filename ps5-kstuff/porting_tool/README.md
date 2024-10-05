@@ -12,16 +12,12 @@
 4. Create symbols.json and first line should be... `{"allproc": <Firmware dec #>}`
 -    Ex. `{"allproc": 41344088}`
 
-Firmware dec #  
-3.00 = 41344088  
-3.10 = 41344088  
-3.20 = 41344088  
-3.21 = 41344088  
-4.00 = 41868472  
-4.02 = 41868472  
-4.03 = 41868472  
-4.50 = 41868472  
-4.51 = 41868472  
+Firmware dec #
+1.xx = 40705048
+2.xx = 40901672
+3.xx = 41344088  
+4.xx = 41868472  
+5.xx = 43048192
    
 5. Put symbols.json you created into ps5-kstuff/porting_tool folder.  
 
