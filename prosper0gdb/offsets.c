@@ -1,4 +1,3 @@
-#include "r0gdb.h"
 #include "offsets.h"
 
 struct offset_table offsets;
@@ -9,6 +8,80 @@ extern uint64_t kdata_base;
 
 #define START_FW(fw) void set_offsets_ ## fw(void) {
 #define END_FW() }
+
+START_FW(250)
+DEF(allproc, 0x2701c28)
+DEF(idt, 0x63acad0)
+DEF(gdt_array, 0x63adc70)
+DEF(tss_array, 0x63af670)
+DEF(pcpu_array, 0x63b1080)
+DEF(doreti_iret, -0x1976e6c)
+DEF(add_rsp_iret, doreti_iret - 7)
+DEF(swapgs_add_rsp_iret, doreti_iret - 10)
+DEF(rep_movsb_pop_rbp_ret, -0x193779a)
+DEF(rdmsr_start, -0x197831a)
+DEF(wrmsr_ret, -0x19796ec)
+DEF(dr2gpr_start, -0x197e052)
+DEF(gpr2dr_1_start, -0x197dfdc)
+DEF(gpr2dr_2_start, -0x197dfbd)
+DEF(mov_cr3_rax, -0x137a662)
+DEF(mov_rdi_cr3, -0x137a6d2)
+DEF(nop_ret, wrmsr_ret + 2 /*0x0*/)
+DEF(cpu_switch, -0x197e240)
+DEF(mprotect_fix_start, -0x18b7251)
+DEF(mprotect_fix_end, mprotect_fix_start + 6)
+DEF(mmap_self_fix_1_start, -0x12bc7dd)
+DEF(mmap_self_fix_1_end, mmap_self_fix_1_start + 2)
+DEF(mmap_self_fix_2_start, -0x11d951d)
+DEF(mmap_self_fix_2_end, mmap_self_fix_2_start + 2)
+DEF(sigaction_fix_start, -0x1689fac)
+DEF(sigaction_fix_end, -0x1689f60)
+DEF(sysents, 0x166e00)
+DEF(sysents_ps4, 0x15e5e0)
+DEF(sysentvec, 0xc40458)
+DEF(sysentvec_ps4, 0xc405d0)
+DEF(sceSblServiceMailbox, -0x164bde0)
+DEF(sceSblAuthMgrSmIsLoadable2, -0x18540a0)
+DEF(mdbg_call_fix, -0x15ff8bd)
+DEF(syscall_before, -0x17b7e5f)
+DEF(syscall_after, -0x17b7e3c)
+DEF(malloc, -0x10adf60)
+DEF(M_something, 0x1273630)
+DEF(loadSelfSegment_epilogue, -0x1853852)
+DEF(loadSelfSegment_watchpoint, -0x12bbdd8)
+DEF(loadSelfSegment_watchpoint_lr, -0x1853ab7)
+DEF(decryptSelfBlock_watchpoint_lr, -0x185371a)
+DEF(decryptSelfBlock_epilogue, -0x185365c)
+DEF(decryptMultipleSelfBlocks_watchpoint_lr, -0x1853205)
+DEF(decryptMultipleSelfBlocks_epilogue, -0x1852d7c)
+DEF(sceSblServiceMailbox_lr_verifyHeader, -0x1853ce1)
+DEF(sceSblServiceMailbox_lr_loadSelfSegment, -0x18538c6) // fixed
+DEF(sceSblServiceMailbox_lr_decryptSelfBlock, -0x18533dc)
+DEF(sceSblServiceMailbox_lr_decryptMultipleSelfBlocks, -0x1852e36)
+DEF(sceSblServiceMailbox_lr_sceSblAuthMgrSmFinalize, -0x185410e)
+DEF(sceSblServiceMailbox_lr_verifySuperBlock, -0x18f60c5)
+DEF(sceSblServiceMailbox_lr_sceSblPfsClearKey_1, -0x18f669c)
+DEF(sceSblServiceMailbox_lr_sceSblPfsClearKey_2, -0x18f6630)
+DEF(sceSblPfsSetKeys, -0x18f63a0)
+DEF(sceSblServiceCryptAsync, -0x189a970)
+DEF(sceSblServiceCryptAsync_deref_singleton, -0x189a932)
+DEF(copyin, -0x1937f30)
+DEF(copyout, -0x1937fd0)
+DEF(crypt_message_resolve, -0x1459840)
+DEF(justreturn, -0x1976fb0)
+DEF(justreturn_pop, justreturn + 8)
+DEF(mini_syscore_header, 0xcee628)
+DEF(pop_all_iret, -0x1976ecb)
+DEF(pop_all_except_rdi_iret, pop_all_iret + 4)
+DEF(push_pop_all_iret, -0x1917aa8)
+DEF(kernel_pmap_store, 0x31338c8)
+DEF(crypt_singleton_array, 0x2d12390)
+DEF(security_flags, 0x63e1274)
+DEF(targetid, 0x63e127d)
+DEF(qa_flags, 0x63e1298)
+DEF(utoken, 0x63e1300)
+#include "offset_list.txt"
+END_FW()
 
 START_FW(300)
 DEF(allproc, 0x276dc58)
@@ -698,10 +771,14 @@ void* dlsym(void*, const char*);
 
 int set_offsets(void)
 {
-    uint32_t ver = r0gdb_get_fw_version() >> 16;
+    int(*sceKernelGetProsperoSystemSwVersion)(uint32_t*) = dlsym((void*)0x2001, "sceKernelGetProsperoSystemSwVersion");
+    uint32_t buf[10];
+    sceKernelGetProsperoSystemSwVersion(buf);
+    uint32_t ver = buf[9] >> 16;
     switch(ver)
     {
 #ifndef NO_BUILTIN_OFFSETS
+    case 0x250: set_offsets_250(); break;
     case 0x300: set_offsets_300(); break;
     case 0x310: set_offsets_310(); break;
     case 0x320: set_offsets_320(); break;

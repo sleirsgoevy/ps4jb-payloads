@@ -370,6 +370,24 @@ struct shellcore_patch
     size_t sz;
 };
 
+static struct shellcore_patch shellcore_patches_250[] = {
+    {0x8E723E, "\x52\xeb\x08\x66\x90", 5},
+    {0x8E7249, "\xe8\xd2\xfb\xff\xff\x58\xc3", 7},
+    {0x8E723E, "\x31\xc0\x50\xeb\xe3", 5},
+    {0x8E7229, "\xe8\x22\x00\x00\x00\x58\xc3", 7},
+    {0x4895AE, "\xeb\x04", 2},
+    {0x21EBD7, "\xeb\x04", 2},//NEEDS CHECK
+    {0x21A84D, "\xeb\x04", 2},//NEEDS CHECK
+    {0x4A620E, "\x90\x90", 2},
+    {0x48F53D, "\x90\xe9", 2},
+    {0x4A5C06, "\xeb", 1},
+    {0x4A8A83, "\xd0\x00\x00\x00", 4},
+    {0x176A41, "\xe8\x4a\xde\x42\x00\x31\xc9\xff\xc1\xe9\x12\x01\x00\x00", 14},
+    {0x176B61, "\x83\xf8\x02\x0f\x43\xc1\xe9\xff\xfb\xff\xff", 11},
+    {0x17676C, "\xe9\xf3\x02\x00\x00", 5},
+};
+
+
 static struct shellcore_patch shellcore_patches_300[] = {
     {0x9d1cae, "\x52\xeb\x08\x66\x90", 5},
     {0x9d1cb9, "\xe8\x02\xfc\xff\xff\x58\xc3", 7},
@@ -582,10 +600,14 @@ static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches)
         *n_patches = sizeof(shellcore_patches_ ## x) / sizeof(*shellcore_patches_ ## x);\
         patches = shellcore_patches_ ## x;\
         break
-    uint32_t ver = r0gdb_get_fw_version() >> 16;
+    int(*sceKernelGetProsperoSystemSwVersion)(uint32_t*) = dlsym((void*)0x2001, "sceKernelGetProsperoSystemSwVersion");
+    uint32_t buf[10];
+    sceKernelGetProsperoSystemSwVersion(buf);
+    uint32_t ver = buf[9] >> 16;
     struct shellcore_patch* patches;
     switch(ver)
     {
+    FW(250);
     FW(300);
     FW(310);
     FW(320);
@@ -630,6 +652,31 @@ void patch_app_db(void);
 #ifdef FIRMWARE_PORTING
 static struct PARASITES(100) parasites_empty = {};
 #endif
+
+static struct PARASITES(14) parasites_250 = {
+    .lim_syscall = 3,
+    .lim_fself = 12,
+    .lim_total = 14,
+    .parasites = {
+        /* syscall parasites */
+        {-0x17b8347, RDI},
+        {-0x136bffc, RSI},
+        {-0x136bfbc, RSI},
+        /* fself parasites */
+        {-0x12bbbd6, RAX},
+        {-0x12bc75a, RAX},
+        {-0x12bc620, RAX},
+        {-0x12bc33e, RAX},
+        {-0x12bc0bd, RAX},
+        {-0x12bbd4e, RDX},
+        {-0x12bbd42, RCX},
+        {-0x1938150, RDI},
+        {-0x12bc1f6, R10},
+        /* unsorted parasites */
+        {-0x14594fe, RAX},
+        {-0x14594fe, R15},
+    }
+};
 
 static struct PARASITES(12) parasites_300 = {
     .lim_syscall = 3,
@@ -846,10 +893,16 @@ static struct PARASITES(14) parasites_451 = {
 
 static struct parasite_desc* get_parasites(size_t* desc_size)
 {
-    uint32_t ver = r0gdb_get_fw_version() >> 16;
+    int(*sceKernelGetProsperoSystemSwVersion)(uint32_t*) = dlsym((void*)0x2001, "sceKernelGetProsperoSystemSwVersion");
+    uint32_t buf[10];
+    sceKernelGetProsperoSystemSwVersion(buf);
+    uint32_t ver = buf[9] >> 16;
     switch(ver)
     {
 #ifndef FIRMWARE_PORTING
+    case 0x250:
+        *desc_size = sizeof(parasites_250);
+        return (void*)&parasites_250;
     case 0x300:
         *desc_size = sizeof(parasites_300);
         return (void*)&parasites_300;
@@ -887,24 +940,6 @@ static struct parasite_desc* get_parasites(size_t* desc_size)
     }
 }
 
-static inline uint64_t rdtsc(void)
-{
-    uint32_t eax, edx;
-    asm volatile("rdtsc":"=a"(eax),"=d"(edx)::"memory");
-    return (uint64_t)edx << 32 | eax;
-}
-
-//without kstuff = 2308259098
-//with kstuff and in-kelf checks = 86633419408 (37.5 times slower)
-//with kstuff and no in-kelf checks = 68129284331 (39.5 times slower)
-uint64_t bench(void)
-{
-    uint64_t start = rdtsc();
-    for(int i = 0; i < 1000000; i++)
-        getpid();
-    return rdtsc() - start;
-}
-
 int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
     if(r0gdb_init(ds, a, b, c, d))
@@ -913,18 +948,6 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         notify("your firmware is not supported (prosper0gdb)");
         return 1;
 #endif
-    }
-#ifdef PS5KEK
-    extern uint64_t p_syscall;
-    getpid();
-    p_kekcall = (void*)p_syscall;
-#else
-    p_kekcall = (char*)dlsym((void*)0x2001, "getpid") + 7;
-#endif
-    if(!kekcall(0, 0, 0, 0, 0, 0, 0xffffffff00000027))
-    {
-        notify("ps5-kstuff is already loaded");
-        return 1;
     }
     size_t desc_size = 0;
     struct parasite_desc* desc = get_parasites(&desc_size);
@@ -970,36 +993,22 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         mem_blocks[i+1] = (mem_blocks[i] ? mem_blocks[i] + (1<<23) : 0);
     }
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\n", (uintptr_t)5);
-    uint64_t comparison_table_base = (uint64_t)kmalloc(131072);
-    uint64_t comparison_table = ((comparison_table_base - 1) | 65535) + 1;
-    uint8_t* comparison_table_data = mmap(0, 65536, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
-    for(size_t i = 0; i < 256; i++)
-        for(size_t j = 0; j < 256; j++)
-            comparison_table_data[256*i+j] = 8*(1+(i>j)-(i<j));
-    //trying to copyin the whole 64k at once hangs here for some reason
-    for(size_t i = 0; i < 256; i++)
-        copyin(comparison_table+256*i, comparison_table_data+256*i, 256);
-    uint64_t shared_area;
-    if(comparison_table - comparison_table_base > 4096)
-        shared_area = comparison_table - 4096;
-    else
-        shared_area = comparison_table + 65536;
+    uint64_t shared_area = (uint64_t)kmalloc(8192);
+    shared_area = ((shared_area - 1) | 4095) + 1;
     kmemzero((void*)shared_area, 4096);
     uint64_t uelf_virt_base = (find_empty_pml4_index(0) << 39) | (-1ull << 48);
     uint64_t dmem_virt_base = (find_empty_pml4_index(1) << 39) | (-1ull << 48);
     shared_area = virt2phys(shared_area) + dmem_virt_base;
-    uint64_t kelf_parasite_desc = (uint64_t)kmalloc(8192);
-    kelf_parasite_desc = ((kelf_parasite_desc - 1) | 4095) + 1;
+    uint64_t uelf_parasite_desc = (uint64_t)kmalloc(8192);
+    uelf_parasite_desc = ((uelf_parasite_desc - 1) | 4095) + 1;
     for(int i = 0; i < desc->lim_total; i++)
         desc->parasites[i].address += kdata_base;
-    kmemcpy((void*)kelf_parasite_desc, desc, desc_size);
-    uint64_t uelf_parasite_desc = virt2phys(kelf_parasite_desc) + dmem_virt_base;
+    kmemcpy((void*)uelf_parasite_desc, desc, desc_size);
+    uelf_parasite_desc = virt2phys(uelf_parasite_desc) + dmem_virt_base;
     volatile int zero = 0; //hack to force runtime calculation of string pointers
     const char* symbols[] = {
-        "comparison_table"+zero,
         "dmem"+zero,
         "parasites"+zero,
-        "parasites_kmem"+zero,
         "int1_handler"+zero,
         "int13_handler"+zero,
         ".ist_errc"+zero,
@@ -1016,17 +1025,15 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         0,
     };
     uint64_t values[] = {
-        comparison_table,      // comparison_table
         dmem_virt_base,        // dmem
         uelf_parasite_desc,    // parasites
-        kelf_parasite_desc,    // parasites_kmem
         int1_handler,          // int1_handler
         int13_handler,         // int13_handler
         0x1237,                // .ist_errc
         0x1238,                // .ist_noerrc
         0x1239,                // .ist4
         0x1234,                // .pcpu
-        shared_area,           // shared_area
+        shared_area, // shared_area
         0x123a,                // .tss
         0x1235,                // .uelf_cr3
         0x1236,                // .uelf_entry
@@ -1128,6 +1135,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         copyin(offsets.utoken, &q, 4);
     }
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\npatching shellcore... ", (uintptr_t)27);
+    p_kekcall = (char*)dlsym((void*)0x2001, "getpid") + 7;
     //restore the gdb_stub's SIGTRAP handler
     struct sigaction sa;
     sigaction(SIGBUS, 0, &sa);
