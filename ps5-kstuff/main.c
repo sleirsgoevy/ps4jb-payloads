@@ -1074,6 +1074,8 @@ static struct shellcore_patch shellcore_patches_800[] = {
     {0x1f7533, "\x83\xf8\x02\x0f\x43\xc1\xe9\xa7\xfb\xff\xff", 11},//cmp eax, 2; cmovae eax, ecx; jmp 0x1F70E5 **
     {0x1f6f2e, "\xe9\x3f\x03\x00\x00", 5}, // JMP 0x1F7272 **
 
+	{0x6F08F0, "\xC3", 1}, // callback to sceRifManagerRegisterActivationCallback
+
     {0x15fbe80, "\x31\xc0\xc3", 3}, // VR2 Min Fw Check
     {0xa2cac6, "\xeb\x03", 2}, // disable game error message
     {0x2ea51b, "\x90\xe9", 2}, // PS4 Disc Installer Patch 1
