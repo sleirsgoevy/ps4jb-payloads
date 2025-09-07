@@ -2315,6 +2315,194 @@ DEF(lapic_map, 0x28cf838)
 #include "offset_list.txt"
 END_FW()
 
+START_FW(840)
+DEF(allproc, 0x2875d50) //*GOOD*
+DEF(idt, 0x2eb3df0) //*GOOD*
+DEF(gdt_array, 0x2eb50d0) //*GOOD*
+DEF(tss_array, 0x2eb6ad0) //*GOOD*
+DEF(pcpu_array, 0x2ec8a00) //*GOOD*
+DEF(doreti_iret, -0xa27973) //*GOOD*
+DEF(add_rsp_iret, doreti_iret - 7)
+DEF(swapgs_add_rsp_iret, doreti_iret - 10)
+DEF(rep_movsb_pop_rbp_ret, -0x9eb2c6) //*GOOD*
+DEF(rdmsr_start, -0xa290aa) //*GOOD*
+DEF(wrmsr_ret, -0xa2a47c) //*GOOD*
+DEF(dr2gpr_start, -0xA2EA93)
+DEF(gpr2dr_1_start, -0xA2E97A)
+DEF(gpr2dr_2_start, -0xA2E887)
+DEF(mov_cr3_rax_mov_ds, -0xA2E4E9) //*GOOD*
+DEF(mov_rax_cr3, -0x3B6F8F)
+DEF(nop_ret, wrmsr_ret + 2)
+DEF(cpu_switch, -0xa2ec80) //*GOOD*
+DEF(mprotect_fix_start, -0x963e14) //*GOOD*
+DEF(mprotect_fix_end, mprotect_fix_start+6)
+
+DEF(mmap_self_fix_1_start, -0x0)
+DEF(mmap_self_fix_1_end, mmap_self_fix_1_start+2)
+DEF(mmap_self_fix_2_start, -0x0)
+DEF(mmap_self_fix_2_end, mmap_self_fix_2_start+2)
+
+DEF(aslr_fix_start, -0x8AFFA1)
+DEF(aslr_fix_end, aslr_fix_start+2)
+
+DEF(sigaction_fix_start, -0x706dd0) //*GOOD*
+DEF(sigaction_fix_end, -0x706db4) //*GOOD*
+DEF(sysents, 0x1a7db0) //*GOOD*
+DEF(sysents_ps4, 0x19f800) //*GOOD*
+DEF(sysentvec, 0xE21CA8) //*GOOD*
+DEF(sysentvec_ps4, 0xE21E20) //*GOOD*
+DEF(sceSblServiceMailbox, -0x6c30c0)
+DEF(sceSblAuthMgrSmIsLoadable2, -0x8ffc10)
+DEF(mdbg_call_fix, -0x66dc59) //*GOOD*
+DEF(syscall_before, -0x855c71) //*GOOD*
+DEF(syscall_after, -0x855c4d) //*GOOD*
+DEF(malloc, -0xb9c20) //*GOOD*
+DEF(M_something, 0x1457980) //*GOOD*
+DEF(loadSelfSegment_epilogue, -0x8FF4EB)
+DEF(loadSelfSegment_watchpoint, -0x2EB668)
+DEF(loadSelfSegment_watchpoint_lr, -0x8FF757)
+DEF(decryptSelfBlock_watchpoint_lr, -0x8FF3BF)
+DEF(decryptSelfBlock_epilogue, -0x8FF2FE)
+//DEF(decryptMultipleSelfBlocks_watchpoint_lr, -0x8FFF81) //403
+DEF(decryptMultipleSelfBlocks_watchpoint_lr, -0x8FEC88)
+DEF(decryptMultipleSelfBlocks_epilogue, -0x8FEA57)
+DEF(sceSblServiceMailbox_lr_verifyHeader, -0x8ff8f7)
+DEF(sceSblServiceMailbox_lr_loadSelfSegment, -0x8ff55f)
+DEF(sceSblServiceMailbox_lr_decryptSelfBlock, -0x8fef9d)
+DEF(sceSblServiceMailbox_lr_decryptMultipleSelfBlocks, -0x8FE7B3)
+DEF(sceSblServiceMailbox_lr_sceSblAuthMgrSmFinalize, -0x8ffc88)
+DEF(sceSblServiceMailbox_lr_verifySuperBlock, -0x9A4393)
+DEF(sceSblServiceMailbox_lr_sceSblPfsClearKey_1, -0x9A4911)
+DEF(sceSblServiceMailbox_lr_sceSblPfsClearKey_2, -0x9A48A5)
+DEF(sceSblServiceMailbox_lr_npdrm_cmd_5, -0x33C173)
+DEF(sceSblServiceMailbox_lr_npdrm_cmd_6, -0x33BF45)
+//DEF(sceSblPfsSetKeys, -0x9A5930) //403
+DEF(sceSblPfsSetKeys, -0x9A5480)
+DEF(sceSblServiceCryptAsync, -0x945C60)
+DEF(sceSblServiceCryptAsync_deref_singleton, -0x945C23)
+DEF(copyin, -0x9ebb90) //*GOOD*
+DEF(copyout, -0x9ebc40) //*GOOD*
+DEF(crypt_message_resolve, -0x49C700)
+DEF(justreturn, -0xa27ba0) //*GOOD*
+DEF(justreturn_pop, justreturn+8)
+DEF(mini_syscore_header, 0xED4FA8) //*GOOD*
+DEF(pop_all_iret, -0xa279d2) //*GOOD*
+DEF(pop_all_except_rdi_iret, pop_all_iret+4)
+DEF(push_pop_all_iret, -0x9c6608) //*GOOD*
+DEF(kernel_pmap_store, 0x2e48848) //*GOOD*
+DEF(crypt_singleton_array, 0x2d8d830) //*GOOD*
+DEF(security_flags, 0xAC3064)
+DEF(targetid, 0xAC306D)
+DEF(qa_flags, 0xAC3088)
+DEF(utoken, 0xAC30F0)
+DEF(mov_rax_cr0, -0xA2EBE1)
+DEF(mov_cr0_rax, -0xA2EBDC)
+DEF(mov_rdi_cr2, -0xa2ae0a) //*GOOD*
+DEF(lgdt_rdi, -0x9eb4a0) //*GOOD*
+DEF(lidt_lldt, -0xa2e431) //*GOOD*
+DEF(ltr_ax, -0xa2e40f) //*GOOD*
+DEF(kproc_shutdown, -0x9c3660) //*GOOD*
+DEF(s_shutdown_final, 0x378D39) //*GOOD*
+DEF(eventhandler_register, -0x549e50) //*GOOD*
+DEF(strlen_trap, -0x46AA28)
+DEF(lapic_map, 0x28cf838) //*GOOD*
+#include "offset_list.txt"
+END_FW()
+
+START_FW(860)
+DEF(allproc, 0x2875d50) //*GOOD*
+DEF(idt, 0x2eb3df0) //*GOOD*
+DEF(gdt_array, 0x2eb50d0) //*GOOD*
+DEF(tss_array, 0x2eb6ad0) //*GOOD*
+DEF(pcpu_array, 0x2ec8a00) //*GOOD*
+DEF(doreti_iret, -0xa27973) //*GOOD*
+DEF(add_rsp_iret, doreti_iret - 7)
+DEF(swapgs_add_rsp_iret, doreti_iret - 10)
+DEF(rep_movsb_pop_rbp_ret, -0x9eb2c6) //*GOOD*
+DEF(rdmsr_start, -0xa290aa) //*GOOD*
+DEF(wrmsr_ret, -0xa2a47c) //*GOOD*
+DEF(nop_ret, wrmsr_ret + 2)
+DEF(dr2gpr_start, -0xA2EA93)
+DEF(gpr2dr_1_start, -0xA2E97A)
+DEF(gpr2dr_2_start, -0xA2E887)
+DEF(mov_cr3_rax_mov_ds, -0xa2e4e9) //*GOOD*
+DEF(mov_rax_cr3, -0x3B6EFF)
+DEF(cpu_switch, -0xa2ec80) //*GOOD*
+DEF(mprotect_fix_start, -0x963e14) //*GOOD*
+DEF(mprotect_fix_end, mprotect_fix_start+6)
+
+DEF(mmap_self_fix_1_start, 0x0)
+DEF(mmap_self_fix_1_end, mmap_self_fix_1_start+2)
+DEF(mmap_self_fix_2_start, 0x0)
+DEF(mmap_self_fix_2_end, mmap_self_fix_2_start+2)
+
+DEF(aslr_fix_start, -0x8AFFA1)
+DEF(aslr_fix_end, aslr_fix_start+2)
+
+DEF(sigaction_fix_start, -0x706da0) //*GOOD*
+DEF(sigaction_fix_end, -0x706d84) //*GOOD*
+DEF(sysents, 0x1a7db0) //*GOOD*
+DEF(sysents_ps4, 0x19f800) //*GOOD*
+DEF(sysentvec, 0xe21ca8) //*GOOD*
+DEF(sysentvec_ps4, 0xe21e20) //*GOOD*
+DEF(sceSblServiceMailbox, -0x6C3090)
+DEF(sceSblAuthMgrSmIsLoadable2, -0x8FFC10)
+DEF(mdbg_call_fix, -0x66dc29) //*GOOD*
+DEF(syscall_before, -0x855c71) //*GOOD*
+DEF(syscall_after, -0x855c4d) //*GOOD*
+DEF(malloc, -0xb99a0) //*GOOD*
+DEF(M_something, 0x1457980) //*GOOD*
+DEF(loadSelfSegment_epilogue, -0x8FF4EB)
+DEF(loadSelfSegment_watchpoint, -0x2EB488)
+DEF(loadSelfSegment_watchpoint_lr, -0x8FF757)
+DEF(decryptSelfBlock_watchpoint_lr, -0x8FF3BF)
+DEF(decryptSelfBlock_epilogue, -0x8FF2FE)
+//DEF(decryptMultipleSelfBlocks_watchpoint_lr, -0x8FFF81) //403
+DEF(decryptMultipleSelfBlocks_watchpoint_lr, -0x8FEC88)
+DEF(decryptMultipleSelfBlocks_epilogue, -0x8FEA57)
+DEF(sceSblServiceMailbox_lr_verifyHeader, -0x8ff8f7)
+DEF(sceSblServiceMailbox_lr_loadSelfSegment, -0x8ff55f)
+DEF(sceSblServiceMailbox_lr_decryptSelfBlock, -0x8fef9d)
+DEF(sceSblServiceMailbox_lr_decryptMultipleSelfBlocks, -0x8FE7B3)
+DEF(sceSblServiceMailbox_lr_sceSblAuthMgrSmFinalize, -0x8ffc88)
+DEF(sceSblServiceMailbox_lr_verifySuperBlock, -0x9A4393)
+DEF(sceSblServiceMailbox_lr_sceSblPfsClearKey_1, -0x9A4911)
+DEF(sceSblServiceMailbox_lr_sceSblPfsClearKey_2, -0x9A48A5)
+DEF(sceSblServiceMailbox_lr_npdrm_cmd_5, -0x33BF93)
+DEF(sceSblServiceMailbox_lr_npdrm_cmd_6, -0x33BD65)
+//DEF(sceSblPfsSetKeys, -0x9A5930) //403
+DEF(sceSblPfsSetKeys, -0x9A5480)
+DEF(sceSblServiceCryptAsync, -0x945C60)
+DEF(sceSblServiceCryptAsync_deref_singleton, -0x945C23)
+DEF(copyin, -0x9ebb90) //*GOOD*
+DEF(copyout, -0x9ebc40) //*GOOD*
+DEF(crypt_message_resolve, -0x49C670)
+DEF(justreturn, -0xa27ba0) //*GOOD*
+DEF(justreturn_pop, justreturn+8)
+DEF(mini_syscore_header, 0xed4fa8) //*GOOD*
+DEF(pop_all_iret, -0xa279d2) //*GOOD*
+DEF(pop_all_except_rdi_iret, pop_all_iret+4)
+DEF(push_pop_all_iret, -0x9c7c80) //*GOOD*
+DEF(kernel_pmap_store, 0x2e48848) //*GOOD*
+DEF(crypt_singleton_array, 0x2d8d830) //*GOOD*
+DEF(security_flags, 0xAC3064)
+DEF(targetid, 0xAC306D)
+DEF(qa_flags, 0xAC3088)
+DEF(utoken, 0xAC30F0)
+DEF(mov_rax_cr0, -0xA2EBE1)
+DEF(mov_cr0_rax, -0xA2EBDC)
+DEF(mov_rdi_cr2, -0xa2ae0a) //*GOOD*
+DEF(lgdt_rdi, -0x9eb4a0) //*GOOD*
+DEF(lidt_lldt, -0xa2e431) //*GOOD*
+DEF(ltr_ax, -0xa2e40f) //*GOOD*
+DEF(kproc_shutdown, -0x9c4ba8) //*GOOD*
+DEF(s_shutdown_final, 0x378d2c) //*GOOD*
+DEF(eventhandler_register, -0x549dc0) //*GOOD*
+DEF(strlen_trap, -0x46A998)
+DEF(lapic_map, 0x28cf838) //*GOOD*
+#include "offset_list.txt"
+END_FW()
+
 void* dlsym(void*, const char*);
 
 int set_offsets(void)
@@ -2347,6 +2535,8 @@ int set_offsets(void)
     case 0x761: set_offsets_761(); break;
     case 0x800: set_offsets_800(); break;
     case 0x820: set_offsets_820(); break;
+    case 0x840: set_offsets_840(); break;
+    case 0x860: set_offsets_860(); break;
 #endif
     default: return -1;
     }
