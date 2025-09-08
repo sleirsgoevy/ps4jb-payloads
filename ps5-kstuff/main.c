@@ -7,11 +7,22 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <stdbool.h>
 #include "../prosper0gdb/r0gdb.h"
 #include "../prosper0gdb/offsets.h"
 #include "../gdb_stub/dbg.h"
 #include "uelf/structs.h"
 #include "uelf/parasite_desc.h"
+
+bool if_exists(const char *path) {
+  struct stat buffer;
+  return stat(path, &buffer) == 0;
+}
+
+bool sceKernelIsTestKit() {
+  return if_exists("/system/priv/lib/libSceDeci5Ttyp.sprx");
+}
 
 void* dlsym(void*, const char*);
 
@@ -241,10 +252,10 @@ uint64_t get_dmap_base(void)
     return ptrs[0] - ptrs[1];
 }
 
-uint64_t virt2phys(uintptr_t addr)
+uint64_t virt2phys(uintptr_t addr, uint64_t* phys_limit, uint64_t dmap, uint64_t pml)
 {
-    uint64_t dmap = get_dmap_base();
-    uint64_t pml = r0gdb_read_cr3();
+    if (!dmap) dmap = get_dmap_base();
+    if (!pml) pml = r0gdb_read_cr3();
     for(int i = 39; i >= 12; i -= 9)
     {
         uint64_t inner_pml;
@@ -255,12 +266,57 @@ uint64_t virt2phys(uintptr_t addr)
         {
             inner_pml &= (1ull << 52) - (1ull << i);
             inner_pml |= addr & ((1ull << i) - 1);
+            if (phys_limit) *phys_limit = (inner_pml | ((1ull << i) - 1)) + 1;
             return inner_pml;
         }
         inner_pml &= (1ull << 52) - (1ull << 12);
         pml = inner_pml;
     }
     //unreachable
+}
+
+uint64_t kernel_get_proc(uint64_t pid)
+{
+    uint64_t proc = kread8(offsets.allproc);
+    while(proc && (int)kread8(proc+0xbc) != pid)
+        proc = kread8(proc);
+    return proc;
+}
+
+int get_proc_cr3(uint64_t pid, uint64_t* cr3, uint64_t* dmap_base)
+{
+    uint64_t proc = kernel_get_proc(pid);
+    if(proc == 0)
+        return -1;
+    uint64_t vmspace = kread8(proc + 0x200);
+    // TODO: i dont know when this shifted, may be an earlier fw, also, add this to offsets.c? 
+    uint32_t fwver = r0gdb_get_fw_version() >> 16;
+    uint32_t vmspace_pmap_offset = (fwver >= 0x800 ? 0x2E8 : 0x2E0);
+    uint64_t ptrs[2] = {0};
+    copyout(ptrs, vmspace + vmspace_pmap_offset + 32, sizeof(ptrs));
+    if (cr3) *cr3 = ptrs[1];
+    if (dmap_base) *dmap_base = ptrs[0] - ptrs[1];
+    return 0;
+}
+
+int phys_copyin(uint64_t vaddr, const void* src, uint64_t sz, uint64_t dmap, uint64_t pml)
+{
+    const char* p_src = src;
+    uint64_t phys, phys_end;
+    while(sz)
+    {
+        phys = virt2phys(vaddr, &phys_end, dmap, pml);
+        if(phys == -1)
+            return -1;
+        size_t chk = phys_end - phys;
+        if(sz < chk)
+            chk = sz;
+        copyin(dmap+phys, p_src, chk);
+        vaddr += chk;
+        p_src += chk;
+        sz -= chk;
+    }
+    return 0;
 }
 
 uint64_t find_empty_pml4_index(int idx)
@@ -288,17 +344,17 @@ void build_uelf_cr3(uint64_t uelf_cr3, void* uelf_base[2], uint64_t uelf_virt_ba
     kmemcpy((void*)(pml4_virt+2048), (void*)(dmap+cr3+2048), 2048);
     uint64_t pml3_virt = uelf_cr3 + 4096;
     uint64_t pml3_dmap = uelf_cr3 + 16384; //user-accessible direct mapping of physical memory
-    copyin(pml4_virt + 8 * ((uelf_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys(pml3_virt) | 7}, 8);
-    copyin(pml4_virt + 8 * ((dmap_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys(pml3_dmap) | 7}, 8);
+    copyin(pml4_virt + 8 * ((uelf_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys(pml3_virt,0,0,0) | 7}, 8);
+    copyin(pml4_virt + 8 * ((dmap_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys(pml3_dmap,0,0,0) | 7}, 8);
     copyin(pml3_virt, zeros, 4096);
     uint64_t pml2_virt = uelf_cr3 + 8192;
-    copyin(pml3_virt + 8 * ((uelf_virt_base >> 30) & 511), &(uint64_t[1]){virt2phys(pml2_virt) | 7}, 8);
+    copyin(pml3_virt + 8 * ((uelf_virt_base >> 30) & 511), &(uint64_t[1]){virt2phys(pml2_virt,0,0,0) | 7}, 8);
     copyin(pml2_virt, zeros, 4096);
     uint64_t pml1_virt = uelf_cr3 + 12288;
-    copyin(pml2_virt + 8 * ((uelf_virt_base >> 21) & 511), &(uint64_t[1]){virt2phys(pml1_virt) | 7}, 8);
+    copyin(pml2_virt + 8 * ((uelf_virt_base >> 21) & 511), &(uint64_t[1]){virt2phys(pml1_virt,0,0,0) | 7}, 8);
     copyin(pml1_virt, zeros, 4096);
     for(uint64_t i = 0; i * 4096 + user_start < user_end; i++)
-        copyin(pml1_virt+8*i, &(uint64_t[1]){virt2phys(i*4096+user_start) | 7}, 8);
+        copyin(pml1_virt+8*i, &(uint64_t[1]){virt2phys(i*4096+user_start,0,0,0) | 7}, 8);
     for(uint64_t i = 0; i < 512; i++)
         copyin(pml3_dmap+8*i, &(uint64_t[1]){(i<<30) | 135}, 8);
 }
@@ -331,6 +387,7 @@ static uint64_t remote_syscall(int pid, int nr, ...)
     return kekcall(pid, nr, (uint64_t)args, 0, 0, 0, KEKCALL_REMOTE_SYSCALL);
 }
 
+#define SYS_mlock 203
 #define SYS_mdbg_call 573
 #define SYS_dynlib_get_info_ex 608
 
@@ -1055,24 +1112,22 @@ static struct shellcore_patch shellcore_patches_761[] = {
 };
 
 static struct shellcore_patch shellcore_patches_800[] = {
-    {0xba85ce, "\x52\xeb\x08", 3}, //push rdx; jmp 0xBA85D9 **
-    {0xba85d9, "\xe8\xe2\xf6\xff\xff\x58\xc3", 7}, //call 0xBA7CC0; pop rax; ret **
-    //{0xba7cb2, "\xe0\x0a\x00\x00", 4},
-    {0xba7cb1, "\xe9\xae\xfd\xff\xff", 5},  // jmp 0xBA7A64 **
-    //{0xba8796, "\x31\xc0\x50\xe8\x22\xf5\xff\xff\x58\xc3", 10}, // xor eax,eax; push rax; call 0xBA7CC0; pop rax; ret
-    {0xba7a64, "\x31\xc0\x50\xe8\x54\x02\x00\x00\x58\xc3", 10}, //xor eax, eax; push rax; call 0xBA7CC0; pop rax; ret **
+    {0xba85ce, "\x52\xeb\x08", 3}, //push rdx; jmp 0xBA85D9
+    {0xba85d9, "\xe8\xe2\xf6\xff\xff\x58\xc3", 7}, //call 0xBA7CC0; pop rax; ret
+    {0xba7cb1, "\xe9\xae\xfd\xff\xff", 5},  // jmp 0xBA7A64
+    {0xba7a64, "\x31\xc0\x50\xe8\x54\x02\x00\x00\x58\xc3", 10}, //xor eax, eax; push rax; call 0xBA7CC0; pop rax; ret
 
-    {0x6b27bd, "\xeb\x04", 2}, //jmp 0x6B27C3 **
-    {0x2f1a82, "\xeb\x04", 2}, //jmp 0x2F1A88 **
-    {0x2f1ed2, "\xeb\x04", 2}, //jmp 0x2F1ED8 **
-    {0x6d1cc1, "\xeb", 1}, //jmp **
-    {0x6baa05, "\x90\xe9", 2}, //nop; jmp **
-    {0x6d2a0d, "\xeb", 1}, //jmp **
+    {0x6b27bd, "\xeb\x04", 2}, //jmp 0x6B27C3
+    {0x2f1a82, "\xeb\x04", 2}, //jmp 0x2F1A88
+    {0x2f1ed2, "\xeb\x04", 2}, //jmp 0x2F1ED8
+    {0x6d1cc1, "\xeb", 1}, //jmp
+    {0x6baa05, "\x90\xe9", 2}, //nop; jmp
+    {0x6d2a0d, "\xeb", 1}, //jmp
 
-    {0x6d3f89, "\x61\x01\x00\x00", 4}, // 0x6D40EE **
-    {0x1f7272, "\xe8\x19\x3c\x5c\x00\x31\xc9\xff\xc1\xe9\xb3\x02\x00\x00", 14}, // call 0x7BAE90; xor ecx; inc ecx; jmp 0x1f7533 **
-    {0x1f7533, "\x83\xf8\x02\x0f\x43\xc1\xe9\xa7\xfb\xff\xff", 11},//cmp eax, 2; cmovae eax, ecx; jmp 0x1F70E5 **
-    {0x1f6f2e, "\xe9\x3f\x03\x00\x00", 5}, // JMP 0x1F7272 **
+    {0x6d3f89, "\x61\x01\x00\x00", 4}, // 0x6D40EE
+    {0x1f7272, "\xe8\x19\x3c\x5c\x00\x31\xc9\xff\xc1\xe9\xb3\x02\x00\x00", 14}, // call 0x7BAE90; xor ecx; inc ecx; jmp 0x1f7533
+    {0x1f7533, "\x83\xf8\x02\x0f\x43\xc1\xe9\xa7\xfb\xff\xff", 11},//cmp eax, 2; cmovae eax, ecx; jmp 0x1F70E5
+    {0x1f6f2e, "\xe9\x3f\x03\x00\x00", 5}, // JMP 0x1F7272
 
 	{0x6F08F0, "\xC3", 1}, // callback to sceRifManagerRegisterActivationCallback
 
@@ -1290,7 +1345,30 @@ static const struct shellcore_patch* get_shellcore_patches(size_t* n_patches)
     return patches;
 }
 
-static void patch_shellcore(const struct shellcore_patch* patches, size_t n_patches, uint64_t eh_frame_offset)
+static int patch_shellcore(const struct shellcore_patch* patches, size_t n_patches, uint64_t eh_frame_offset)
+{
+    int pid = find_proc("SceShellCore");
+    struct module_info_ex mod_info;
+    mod_info.st_size = sizeof(mod_info);
+    if (remote_syscall(pid, SYS_dynlib_get_info_ex, 0, 0, &mod_info))
+        return -1;
+    uint64_t shellcore_base = mod_info.eh_frame_hdr_addr - eh_frame_offset;
+    uint64_t textsize = mod_info.segments[0].size;
+    if (remote_syscall(pid, SYS_mlock, shellcore_base, textsize))
+        return -1;
+    uint64_t cr3, dmap;
+    if(get_proc_cr3(pid, &cr3, &dmap))
+        return -1;
+
+    for(int i = 0; i < n_patches; i++)
+    {
+        if(phys_copyin(shellcore_base + patches[i].offset, patches[i].data, patches[i].sz, dmap, cr3))
+            return -1;
+    }
+    return 0;
+}
+
+static void patch_shellcore_old(const struct shellcore_patch* patches, size_t n_patches, uint64_t eh_frame_offset)
 {
     int pid = find_proc("SceShellCore");
     struct module_info_ex mod_info;
@@ -2165,13 +2243,13 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     kmemzero((void*)shared_area, 4096);
     uint64_t uelf_virt_base = (find_empty_pml4_index(0) << 39) | (-1ull << 48);
     uint64_t dmem_virt_base = (find_empty_pml4_index(1) << 39) | (-1ull << 48);
-    shared_area = virt2phys(shared_area) + dmem_virt_base;
+    shared_area = virt2phys(shared_area,0,0,0) + dmem_virt_base;
     uint64_t kelf_parasite_desc = (uint64_t)kmalloc(8192);
     kelf_parasite_desc = ((kelf_parasite_desc - 1) | 4095) + 1;
     for(int i = 0; i < desc->lim_total; i++)
         desc->parasites[i].address += kdata_base;
     kmemcpy((void*)kelf_parasite_desc, desc, desc_size);
-    uint64_t uelf_parasite_desc = virt2phys(kelf_parasite_desc) + dmem_virt_base;
+    uint64_t uelf_parasite_desc = virt2phys(kelf_parasite_desc,0,0,0) + dmem_virt_base;
     volatile int zero = 0; //hack to force runtime calculation of string pointers
     const char* symbols[] = {
         "comparison_table"+zero,
@@ -2261,7 +2339,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         uintptr_t uelf_cr3 = (uintptr_t)kmalloc(24576);
         uelf_cr3 = ((uelf_cr3 + 4095) | 4095) - 4095;
         uelf_cr3s[cpu] = uelf_cr3;
-        values[uelf_cr3_idx] = virt2phys(uelf_cr3);
+        values[uelf_cr3_idx] = virt2phys(uelf_cr3,0,0,0);
         values[uelf_entry_idx] = (uintptr_t)uelf_entry - (uintptr_t)uelf_base[0] + uelf_virt_base;
         void* entry = 0;
         void* base[2] = {0};
@@ -2303,7 +2381,8 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         copyout(&q, offsets.security_flags, 4);
         q |= 0x14;
         copyin(offsets.security_flags, &q, 4);
-        copyin(offsets.targetid, "\x82", 1);
+		if(!sceKernelIsTestKit())
+            copyin(offsets.targetid, "\x82", 1);
         copyout(&q, offsets.qa_flags, 4);
         q |= 0x1030300;
         copyin(offsets.qa_flags, &q, 4);
@@ -2321,7 +2400,11 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 #endif
     copyin(IDT+16*9+5, "\x8e", 1);
     copyin(IDT+16*179+5, "\x8e", 1);
-    patch_shellcore(shellcore_patches, n_shellcore_patches, shellcore_eh_frame_offset);
+    if(!sceKernelIsTestKit())
+    {
+        if (patch_shellcore(shellcore_patches, n_shellcore_patches, shellcore_eh_frame_offset))
+            notify("failed to patch shellcore");
+    }
     gdb_remote_syscall("write", 3, 0, (uintptr_t)1, (uintptr_t)"done\npatching app.db... ", (uintptr_t)24);
     #ifndef FIRMWARE_PORTING
     //patch_app_db();
