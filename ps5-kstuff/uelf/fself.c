@@ -173,7 +173,13 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
     else if(lr == (uint64_t)sceSblServiceMailbox_lr_loadSelfSegment)
     {
         uint64_t ctx[8];
-        copy_from_kernel(ctx, (fwver >= 0x800) ? kpeek64(regs[RBP] - 240) : regs[RBX], sizeof(ctx));
+		copy_from_kernel(
+    		ctx,
+    		(fwver >= 0x900) ? regs[R14] :
+    		(fwver >= 0x800 && fwver <= 0x860) ? kpeek64(regs[RBP] - 240) :
+    		regs[RBX],
+    		sizeof(ctx)
+		);
 
         if(is_header_fself(ctx[7], (uint32_t)ctx[1], 0, 0, 0, 0))
         {
