@@ -21,7 +21,7 @@ with open('syscalls.txt') as file:
         print('push r8')
         print('push r9')
         print('push rax')
-        print('mov edi, 0x2001')
+        print('mov edi, 0x1')
         print('lea rsi, [rel str__'+i+']')
         print('lea rdx, [rel addr__'+i+']')
         print('call [rel addr__dynlib_dlsym]')

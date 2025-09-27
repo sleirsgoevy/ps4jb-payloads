@@ -17,6 +17,7 @@
 #include "syscall_fixes.h"
 #include "shared_area.h"
 #include "uexec.h"
+#include "npdrm.h"
 
 int have_error_code;
 
@@ -68,6 +69,9 @@ void handle_syscall(uint64_t* regs, int allow_kekcall)
     else if(IS(nmount)
          || IS(unmount))
         handle_fpkg_syscall(regs);
+    else if(IS(ioctl)
+         || IS_PPR(ioctl))
+        handle_ioctl_syscall(regs);
     else if(IS(mprotect)
          || IS_PPR(mdbg_call))
         handle_syscall_fix(regs);

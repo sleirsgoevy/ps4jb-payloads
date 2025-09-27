@@ -8,6 +8,7 @@ extern uint64_t cr3_phys;
 extern uint64_t cr3_phys_addr;
 extern uint64_t trap_frame;
 extern char pcpu[];
+extern char fwver[];
 
 extern char dmem[];
 #define DMEM dmem

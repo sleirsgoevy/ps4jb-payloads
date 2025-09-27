@@ -6,8 +6,9 @@ extern char mprotect_fix_end[];
 extern char mdbg_call_fix[];
 
 static uint64_t dbgregs_for_syscall_fix[6] = {
-    (uint64_t)mprotect_fix_start, (uint64_t)mdbg_call_fix, 0, 0,
-    0, 0x405,
+    (uint64_t)mprotect_fix_start, (uint64_t)mdbg_call_fix, (uint64_t) 
+    aslr_fix_start, 0,
+    0, 0x415,
 };
 
 void handle_syscall_fix(uint64_t* regs)
@@ -21,6 +22,8 @@ int try_handle_syscall_fix_trap(uint64_t* regs)
         regs[RIP] = (uint64_t)mprotect_fix_end;
     else if(regs[RIP] == (uint64_t)mdbg_call_fix)
         regs[RAX] = 1;
+    else if (regs[RIP] == (uint64_t) aslr_fix_start)
+        regs[RIP] = (uint64_t) aslr_fix_end;
     else
         return 0;
     return 1;

@@ -89,7 +89,7 @@ void* dlsym(void*, const char*);
 int do_nmount(struct iovec* iov, size_t n, int flags)
 {
     if(!p_kekcall)
-        p_kekcall = dlsym((void*)0x2001, "getppid") + 7;
+        p_kekcall = dlsym((void*)0x1, "getppid") + 7;
     return my_nmount(iov, n, flags);
 }
 

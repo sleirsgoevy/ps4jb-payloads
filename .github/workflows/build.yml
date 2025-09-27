@@ -1,0 +1,45 @@
+name: Rebuild With New SDK
+
+on:
+  push:
+    paths-ignore:
+      - "**/*.md"
+      - '**/*.txt'
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - '**/*.txt'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.event_name  }}
+  cancel-in-progress: true
+
+jobs:
+  payload-build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install build-essential clang-18 lld-18 xxd yasm nasm
+
+    - name: Install toolchain
+      run: |
+        wget https://github.com/ps5-payload-dev/pacbrew-repo/releases/download/v0.26.1/ps5-payload-dev.tar.gz
+        sudo tar xf ps5-payload-dev.tar.gz -C /
+
+    - name: Build Payload
+      run: |
+        export PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
+        bash ci-ps5-kstuff-ldr.sh
+
+    - name: Upload Payload
+      uses: actions/upload-artifact@v4
+      with:
+        name: Payload
+        path: ./ps5-kstuff-ldr/kstuff.elf
+        if-no-files-found: error

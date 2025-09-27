@@ -16,6 +16,6 @@ void* dlsym(void* handle, const char* name)
 void* dlopen(const char* path, int mode)
 {
     if(!p_sceKernelLoadStartModule)
-        p_sceKernelLoadStartModule = dlsym((void*)0x2001, "sceKernelLoadStartModule");
+        p_sceKernelLoadStartModule = dlsym((void*)0x1, "sceKernelLoadStartModule");
     return (void*)(long long)p_sceKernelLoadStartModule(path, 0, 0, 0, 0, 0);
 }

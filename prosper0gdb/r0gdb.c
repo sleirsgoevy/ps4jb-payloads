@@ -23,8 +23,8 @@
 
 #ifndef PS5KEK
 
-#define gettid() (*((int*(*)(void))dlsym((void*)0x2001, "pthread_self"))())
-#define WRAPPER2(name, sym) ((typeof(&name))dlsym((void*)0x2001, #sym))
+#define gettid() (*((int*(*)(void))dlsym((void*)0x1, "pthread_self"))())
+#define WRAPPER2(name, sym) ((typeof(&name))dlsym((void*)0x1, #sym))
 #define WRAPPER(name) WRAPPER2(name, name)
 
 #else
@@ -483,11 +483,11 @@ void r0gdb_write_dbreg(int which, uint64_t value)
 uint64_t r0gdb_read_cr3(void)
 {
     struct regs regs = {0};
-    regs.rip = offsets.mov_rdi_cr3;
+    regs.rip = offsets.mov_rax_cr3;
     regs.rsp = kstack;
     regs.eflags = 0x102;
     run_in_kernel(&regs);
-    return regs.rdi;
+    return regs.rax;
 }
 
 void r0gdb_write_cr3(uint64_t cr3)
@@ -1572,7 +1572,7 @@ static uint64_t other_thread;
 static void* other_thread_fn(void* arg)
 {
     other_thread = get_thread();
-    //((int(*)())dlsym((void*)0x2001, "sceKernelSleep"))(10000000);
+    //((int(*)())dlsym((void*)0x1, "sceKernelSleep"))(10000000);
     for(;;)
         asm volatile("");
 }

@@ -76,7 +76,7 @@ push rax
 push rax
 mov r10, [rel addr__dynlib_dlsym]
 push r10
-mov edi, 0x2001
+mov edi, 0x1
 lea rsi, [rel getpid_str]
 mov rdx, rsp
 call r10
@@ -101,7 +101,7 @@ mov r10, [rel addr____error]
 test r10, r10
 jnz .have_error
 push rax
-mov edi, 0x2001
+mov edi, 0x1
 lea rsi, [rel error_str]
 mov rdx, rsp
 call [rel addr__dynlib_dlsym]

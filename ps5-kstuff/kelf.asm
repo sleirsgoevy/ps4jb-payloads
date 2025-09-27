@@ -8,7 +8,7 @@ extern justreturn
 extern justreturn_pop
 extern wrmsr_ret
 extern pcpu
-extern mov_rdi_cr3
+extern mov_rax_cr3
 extern mov_cr3_rax_mov_ds
 extern nop_ret
 extern pop_all_iret
@@ -285,7 +285,7 @@ dq 0
 main:
 pokeq ist_noerrc, ist_after_read_cr3
 dq doreti_iret
-dq mov_rdi_cr3
+dq mov_rax_cr3
 dq 0x20
 dq 0x102
 dq 0
@@ -313,8 +313,8 @@ dq after_read_cr3
 dq 0
 
 after_read_cr3:
-memcpy restore_cr3, regs_stash_for_read_cr3+iret_rdi, 8
-memcpy rsi_for_userspace, regs_stash_for_read_cr3+iret_rdi, 8
+memcpy restore_cr3, regs_stash_for_read_cr3+iret_rax, 8
+memcpy rsi_for_userspace, regs_stash_for_read_cr3+iret_rax, 8
 pokeq ist_noerrc, ist_after_write_cr3
 dq justreturn_pop
 dq 0

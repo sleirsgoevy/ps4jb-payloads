@@ -197,13 +197,13 @@ void inject_payload(int pid)
     if(kekcall(pid, SYS_mprotect, (uint64_t)(const uint64_t[6]){target_pointer, sz, PROT_READ|PROT_WRITE|PROT_EXEC}, 0, 0, 0, KEKCALL_REMOTE_SYSCALL))
         asm volatile("ud2");
     *(uint64_t*)(buf+shellcode_offset+8) = target_pointer;
-    kekcall(pid, SYS_dynlib_dlsym, (uint64_t)(const uint64_t[6]){0x2001, (uint64_t)"sceKernelDlsym", (uint64_t)(buf+shellcode_offset+18)}, 0, 0, 0, KEKCALL_REMOTE_SYSCALL);
+    kekcall(pid, SYS_dynlib_dlsym, (uint64_t)(const uint64_t[6]){0x1, (uint64_t)"sceKernelDlsym", (uint64_t)(buf+shellcode_offset+18)}, 0, 0, 0, KEKCALL_REMOTE_SYSCALL);
     if(!*(uint64_t*)(buf+shellcode_offset+18))
         asm volatile("ud2");
-    kekcall(pid, SYS_dynlib_dlsym, (uint64_t)(const uint64_t[6]){0x2001, (uint64_t)"pthread_create", (uint64_t)(buf+shellcode_offset+28)}, 0, 0, 0, KEKCALL_REMOTE_SYSCALL);
+    kekcall(pid, SYS_dynlib_dlsym, (uint64_t)(const uint64_t[6]){0x1, (uint64_t)"pthread_create", (uint64_t)(buf+shellcode_offset+28)}, 0, 0, 0, KEKCALL_REMOTE_SYSCALL);
     if(!*(uint64_t*)(buf+shellcode_offset+28))
         asm volatile("ud2");
-    kekcall(pid, SYS_dynlib_dlsym, (uint64_t)(const uint64_t[6]){0x2001, (uint64_t)"getpid", (uint64_t)(buf+shellcode_offset+51)}, 0, 0, 0, KEKCALL_REMOTE_SYSCALL);
+    kekcall(pid, SYS_dynlib_dlsym, (uint64_t)(const uint64_t[6]){0x1, (uint64_t)"getpid", (uint64_t)(buf+shellcode_offset+51)}, 0, 0, 0, KEKCALL_REMOTE_SYSCALL);
     if(!*(uint64_t*)(buf+shellcode_offset+51))
         asm volatile("ud2");
     *(uint64_t*)(buf+shellcode_offset+51) += 7;
@@ -338,7 +338,7 @@ static void temp_patch_shellcore(struct shellcore_patch* sc_patches, int n_patch
     uint64_t shellcore_base = mod_info.eh_frame_hdr_addr - get_eh_frame_offset("/system/vsh/SceShellCore.elf");
     mod_info.st_size = sizeof(mod_info);
     uint64_t libkernel_nmount;
-    do_remote_syscall(pid, SYS_dynlib_dlsym, 0x2001, "nmount", &libkernel_nmount);
+    do_remote_syscall(pid, SYS_dynlib_dlsym, 0x1, "nmount", &libkernel_nmount);
     shellcore_args_base = do_remote_syscall(pid, SYS_mmap, 0, 16384, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
     struct
     {

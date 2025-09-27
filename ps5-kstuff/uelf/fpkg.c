@@ -50,7 +50,10 @@ static int handle_crypto_message(uint64_t* regs, uint64_t msg, uint64_t bytes_ca
         uint8_t hash[32] = {0};
         *bytes_handled += msg_data[1];
         if(bytes_cap < *bytes_handled && pfs_hmac_virtual(hash, key, msg_data[2], msg_data[1]))
+		 
+										   
             return -1;
+		 
         copy_to_kernel(msg+32, hash, 32);
         return 0;
     }
@@ -102,10 +105,14 @@ static int handle_crypto_request(uint64_t* regs, uint64_t bytes_handled)
     int emulated = 0;
     int total_status = 0;
     uint64_t new_bytes_handled = 0;
-    for(uint64_t msg = regs[R14]; msg && !total_status; msg = kpeek64(msg+320))
+
+    uint64_t start = (fwver >= 0x800) ? regs[RBX] : regs[R14];
+
+    for (uint64_t msg = start; msg && !total_status; msg = kpeek64(msg + 320))
     {
         int status = handle_crypto_message(regs, msg, bytes_handled, &new_bytes_handled);
-        if(status == EINTR) //partial decrypt, need to restart the syscall
+
+        if (status == EINTR) // partial decrypt, need to restart the syscall
         {
             uint64_t frame[6] = {
                 MKTRAP(TRAP_FPKG, 2), 0, 0, 0, 0,
@@ -115,28 +122,34 @@ static int handle_crypto_request(uint64_t* regs, uint64_t bytes_handled)
             regs[RIP] = (uint64_t)doreti_iret;
             return 1;
         }
+
         total++;
-        if(status != ENOSYS)
+
+        if (status != ENOSYS)
         {
             emulated++;
-            if(status)
+            if (status)
                 total_status = status;
         }
     }
-    if(emulated)
+
+    if (emulated)
     {
-        if(emulated < total)
+        if (emulated < total)
         {
-            //not all requests successfully emulated
-            //we can't run only part of the request, so just report failure
+            // not all requests successfully emulated
+            // we can't run only part of the request, so just report failure
             total_status = -1;
         }
-        crypto_request_emulated(regs, regs[R14], total_status);
+
+        crypto_request_emulated(regs, (fwver >= 0x800) ? regs[RBX] : regs[R14], total_status);
+
         uint64_t end_time = rdtsc();
         /*log_word(0x1234);
         log_word(end_time - start_time);*/
         return 1;
     }
+
     return 0;
 }
 
@@ -189,10 +202,12 @@ int try_handle_fpkg_mailbox(uint64_t* regs, uint64_t lr)
          || lr == (uint64_t)sceSblServiceMailbox_lr_sceSblPfsClearKey_2)
     {
         uint32_t handle = kpeek64(regs[RDX]+8);
+
         int key = HANDLE_TO_IDX(handle);
         if(key >= 0 && unregister_fake_key(key))
         {
             copy_to_kernel(regs[RDX], (const uint64_t[16]){}, 16);
+
             regs[RIP] = lr;
             regs[RAX] = 0;
             regs[RSP] += 8;
