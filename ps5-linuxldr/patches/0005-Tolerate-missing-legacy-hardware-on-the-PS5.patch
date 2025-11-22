@@ -1,0 +1,92 @@
+From 5fcdf19d21784ad1a940c051a7a584f95cbc015a Mon Sep 17 00:00:00 2001
+From: Sonya Sireneva <sleirsgoevy@gmail.com>
+Date: Thu, 26 Jun 2025 16:30:50 +0300
+Subject: [PATCH 5/7] Tolerate missing legacy hardware on the PS5
+
+PS5 does not have the legacy PIC, PIT, IOAPIC, and its ACPI
+implementation does not provide an SCI interrupt.
+---
+ arch/x86/kernel/i8253.c |  5 +++++
+ drivers/acpi/osl.c      |  2 +-
+ drivers/acpi/pci_irq.c  | 15 +++++++++++++++
+ 3 files changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/kernel/i8253.c b/arch/x86/kernel/i8253.c
+index 80e262bb6..cf61d6316 100644
+--- a/arch/x86/kernel/i8253.c
++++ b/arch/x86/kernel/i8253.c
+@@ -13,6 +13,7 @@
+ #include <asm/hpet.h>
+ #include <asm/time.h>
+ #include <asm/smp.h>
++#include <asm/setup.h>
+ 
+ /*
+  * HPET replaces the PIT, when enabled. So we need to know, which of
+@@ -34,6 +35,10 @@ static bool __init use_pit(void)
+ 	if (!IS_ENABLED(CONFIG_X86_TSC) || !boot_cpu_has(X86_FEATURE_TSC))
+ 		return true;
+ 
++	//PS5 has no PIC/PIT, we can't use what doesn't exist
++	if (boot_params.hdr.hardware_subarch == X86_SUBARCH_PS5)
++		return false;
++
+ 	/* This also returns true when APIC is disabled */
+ 	return apic_needs_pit();
+ }
+diff --git a/drivers/acpi/osl.c b/drivers/acpi/osl.c
+index 5ff343096..9e648c0e7 100644
+--- a/drivers/acpi/osl.c
++++ b/drivers/acpi/osl.c
+@@ -582,7 +582,7 @@ acpi_os_install_interrupt_handler(u32 gsi, acpi_osd_handler handler,
+ 			         "acpi", acpi_irq)) {
+ 		pr_err("SCI (IRQ%d) allocation failed\n", irq);
+ 		acpi_irq_handler = NULL;
+-		return AE_NOT_ACQUIRED;
++		return AE_OK;
+ 	}
+ 	acpi_sci_irq = irq;
+ 
+diff --git a/drivers/acpi/pci_irq.c b/drivers/acpi/pci_irq.c
+index 630fe0a34..52b25a1c3 100644
+--- a/drivers/acpi/pci_irq.c
++++ b/drivers/acpi/pci_irq.c
+@@ -22,6 +22,9 @@
+ #include <linux/acpi.h>
+ #include <linux/slab.h>
+ #include <linux/interrupt.h>
++#ifdef CONFIG_X86
++#include <asm/setup.h>
++#endif
+ 
+ struct acpi_prt_entry {
+ 	struct acpi_pci_id	id;
+@@ -401,6 +404,12 @@ int acpi_pci_irq_enable(struct pci_dev *dev)
+ 	char link_desc[16];
+ 	int rc;
+ 
++#ifdef CONFIG_X86
++	//PS5 has no IOAPIC and that's fine
++	if (unlikely(boot_params.hdr.hardware_subarch == X86_SUBARCH_PS5))
++		return 0;
++#endif
++
+ 	pin = dev->pin;
+ 	if (!pin) {
+ 		dev_dbg(&dev->dev, "No interrupt pin configured\n");
+@@ -480,6 +489,12 @@ void acpi_pci_irq_disable(struct pci_dev *dev)
+ 	int gsi;
+ 	u8 pin;
+ 
++#ifdef CONFIG_X86
++	//PS5 has no IOAPIC and that's fine
++	if (unlikely(boot_params.hdr.hardware_subarch == X86_SUBARCH_PS5))
++		return;
++#endif
++
+ 	pin = dev->pin;
+ 	if (!pin || !dev->irq_managed || dev->irq <= 0)
+ 		return;
+-- 
+2.50.1
+

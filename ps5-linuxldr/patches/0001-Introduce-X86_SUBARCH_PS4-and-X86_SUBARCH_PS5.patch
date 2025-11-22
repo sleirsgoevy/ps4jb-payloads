@@ -1,0 +1,25 @@
+From 2c348cffbff15bdec35210ea782f7eb5d2d1591d Mon Sep 17 00:00:00 2001
+From: Sonya Sireneva <sleirsgoevy@gmail.com>
+Date: Thu, 26 Jun 2025 16:24:26 +0300
+Subject: [PATCH 1/7] Introduce X86_SUBARCH_PS4 and X86_SUBARCH_PS5
+
+---
+ arch/x86/include/uapi/asm/bootparam.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/x86/include/uapi/asm/bootparam.h b/arch/x86/include/uapi/asm/bootparam.h
+index 9b82eebd7..1b2266be3 100644
+--- a/arch/x86/include/uapi/asm/bootparam.h
++++ b/arch/x86/include/uapi/asm/bootparam.h
+@@ -207,6 +207,8 @@ enum x86_hardware_subarch {
+ 	X86_SUBARCH_XEN,
+ 	X86_SUBARCH_INTEL_MID,
+ 	X86_SUBARCH_CE4100,
++	X86_SUBARCH_PS4,
++	X86_SUBARCH_PS5,
+ 	X86_NR_SUBARCHS,
+ };
+ 
+-- 
+2.50.1
+

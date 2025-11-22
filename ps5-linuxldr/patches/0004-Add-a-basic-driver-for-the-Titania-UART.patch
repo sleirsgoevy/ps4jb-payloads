@@ -1,0 +1,311 @@
+From 27aaffc1d7fb9880a90d32b5578257b94de70a4c Mon Sep 17 00:00:00 2001
+From: Sonya Sireneva <sleirsgoevy@gmail.com>
+Date: Thu, 26 Jun 2025 16:30:02 +0300
+Subject: [PATCH 4/7] Add a basic driver for the Titania UART
+
+Currently it's output-only and only supports earlycon mode properly.
+---
+ arch/x86/boot/compressed/misc.c |  16 +++
+ drivers/tty/serial/Kconfig      |   7 +
+ drivers/tty/serial/Makefile     |   1 +
+ drivers/tty/serial/titania.c    | 224 ++++++++++++++++++++++++++++++++
+ 4 files changed, 248 insertions(+)
+ create mode 100644 drivers/tty/serial/titania.c
+
+diff --git a/arch/x86/boot/compressed/misc.c b/arch/x86/boot/compressed/misc.c
+index 0d37420ca..adc684a38 100644
+--- a/arch/x86/boot/compressed/misc.c
++++ b/arch/x86/boot/compressed/misc.c
+@@ -116,6 +116,16 @@ static void serial_putchar(int ch)
+ 	outb(ch, early_serial_base + TXR);
+ }
+ 
++static void ps5_putchar(uint8_t ch)
++{
++	volatile uint32_t* titania_uart = (volatile uint32_t*)0xc1010100;
++	if (ch == '\n')
++		ps5_putchar('\r');
++	while ((titania_uart[3] & 0x800))
++		cpu_relax();
++	titania_uart[1] = ch;
++}
++
+ void __putstr(const char *s)
+ {
+ 	int x, y, pos;
+@@ -130,6 +140,12 @@ void __putstr(const char *s)
+ 		}
+ 	}
+ 
++	if (boot_params_ptr->hdr.hardware_subarch == X86_SUBARCH_PS5) {
++		const char *str = s;
++		while (*str)
++			ps5_putchar(*str++);
++	}
++
+ 	if (lines == 0 || cols == 0)
+ 		return;
+ 
+diff --git a/drivers/tty/serial/Kconfig b/drivers/tty/serial/Kconfig
+index 976dae3bb..784736f67 100644
+--- a/drivers/tty/serial/Kconfig
++++ b/drivers/tty/serial/Kconfig
+@@ -1600,6 +1600,13 @@ config SERIAL_ESP32_ACM
+ 	  snippet may be used:
+ 	    earlycon=esp32s3acm,mmio32,0x60038000
+ 
++config SERIAL_TITANIA
++	tristate "Titania UART (as found in the PS5)"
++	depends on X86 || COMPILE_TEST
++	select SERIAL_EARLYCON
++	help
++	  Earlycon driver for the Titania UART, as found in the Sony PS5.
++
+ endmenu
+ 
+ config SERIAL_MCTRL_GPIO
+diff --git a/drivers/tty/serial/Makefile b/drivers/tty/serial/Makefile
+index 6ff74f0a9..793f66aee 100644
+--- a/drivers/tty/serial/Makefile
++++ b/drivers/tty/serial/Makefile
+@@ -87,6 +87,7 @@ obj-$(CONFIG_SERIAL_SUNPLUS)		+= sunplus-uart.o
+ obj-$(CONFIG_SERIAL_TEGRA)		+= serial-tegra.o
+ obj-$(CONFIG_SERIAL_TEGRA_TCU)		+= tegra-tcu.o
+ obj-$(CONFIG_SERIAL_TIMBERDALE)		+= timbuart.o
++obj-$(CONFIG_SERIAL_TITANIA)		+= titania.o
+ obj-$(CONFIG_SERIAL_TXX9)		+= serial_txx9.o
+ obj-$(CONFIG_SERIAL_UARTLITE)		+= uartlite.o
+ obj-$(CONFIG_SERIAL_VT8500)		+= vt8500_serial.o
+diff --git a/drivers/tty/serial/titania.c b/drivers/tty/serial/titania.c
+new file mode 100644
+index 000000000..264f707ae
+--- /dev/null
++++ b/drivers/tty/serial/titania.c
+@@ -0,0 +1,224 @@
++#include <linux/console.h>
++#include <linux/serial_core.h>
++#include <linux/platform_device.h>
++#include <linux/irqdomain.h>
++#include <linux/irq.h>
++#include <linux/tty_flip.h>
++#include <asm/irqdomain.h>
++#include <asm/hw_irq.h>
++#include <asm/io.h>
++#include <asm/setup.h>
++
++static void titania_early_putchar(void __iomem *registers, char c)
++{
++	while ((readl(registers+12) & 0x800));
++	writel(c, registers+4);
++}
++
++static void titania_early_write(struct console *con, const char *s, unsigned int n)
++{
++	void __iomem *registers = con->data;
++	for (unsigned int i = 0; i < n; ++i) {
++		if (s[i] == '\n')
++			titania_early_putchar(registers, '\r');
++		titania_early_putchar(registers, s[i]);
++	}
++}
++
++static int titania_early_read(struct console *con, char *s, unsigned int n)
++{
++	void __iomem *registers = (void __iomem*)con->data;
++	unsigned int i = 0;
++
++	while (i < n && (readl(registers+12) & 0x10))
++		s[i++] = readl(registers+0);
++
++	return i;
++}
++
++static int __init titania_early_console_setup(struct earlycon_device *device, const char *opt)
++{
++	device->con->data = (void*)early_ioremap(0xc1010100, 16);
++	device->con->write = titania_early_write;
++	device->con->read = titania_early_read;
++	return 0;
++}
++EARLYCON_DECLARE(titania, titania_early_console_setup);
++
++static void __iomem* mapping;
++static uint8_t buf[64];
++static size_t head, tail;
++static struct tty_driver *the_driver;
++static struct tty_port *the_tty;
++static DEFINE_MUTEX(the_mutex);
++
++static void push(bool locked)
++{
++	if (!locked)
++		mutex_lock(&the_mutex);
++	while (head != tail) {
++		if ((readl(mapping + 12) & 0x800)) {
++			writel(0x2039, mapping+8);
++			mutex_unlock(&the_mutex);
++			return;
++		}
++		writel(buf[tail++], mapping+4);
++		tail %= 64;
++	}
++	mutex_unlock(&the_mutex);
++	tty_port_tty_wakeup(the_tty);
++}
++
++static void pull(void)
++{
++	char buf[64] = {};
++	size_t sz = 0;
++
++	while (sz < 64 && (readl(mapping + 12) & 0x10))
++		buf[sz++] = readl(mapping);
++
++	if (sz > 0) {
++		tty_insert_flip_string(the_tty, buf, sz);
++		tty_flip_buffer_push(the_tty);
++	}
++}
++
++static irqreturn_t atomic_handler(int irq, void* opaque)
++{
++	if(readl(mapping + 8) == 0x2039)
++	{
++		writel(0x2019, mapping+8);
++		return IRQ_WAKE_THREAD;
++	}
++	if((readl(mapping + 12) & 0x10))
++		return IRQ_WAKE_THREAD;
++	return IRQ_HANDLED;
++}
++
++static irqreturn_t threaded_handler(int irq, void* opaque)
++{
++	pull();
++	push(false);
++	return IRQ_HANDLED;
++}
++
++static int titania_tty_open(struct tty_struct *tty, struct file *file)
++{
++	return tty_port_open(the_tty, tty, file);
++}
++
++static ssize_t titania_tty_write(struct tty_struct *tty, const unsigned char *buffer, size_t count)
++{
++	mutex_lock(&the_mutex);
++	for (size_t i = 0; i < count; i++) {
++		buf[head++] = buffer[i];
++		head %= 64;
++	}
++
++	push(true);
++	return count;
++}
++
++static unsigned int titania_tty_write_room(struct tty_struct *tty)
++{
++	mutex_lock(&the_mutex);
++	unsigned int ans = 63 - (head + 64 - tail) % 64;
++	mutex_unlock(&the_mutex);
++	return ans;
++}
++
++static struct tty_operations titania_tty_ops = {
++	.open = titania_tty_open,
++	.write = titania_tty_write,
++	.write_room = titania_tty_write_room,
++};
++
++static struct tty_port_operations titania_port_ops = {};
++
++static int acquire_x86_vector_irq(int vector)
++{
++	int irqs[256];
++	struct irq_alloc_info alloc_info = {};
++	int target_idx = 256;
++
++	for (size_t i = 0; i < 256; i++) {
++		irqs[i] = irq_domain_alloc_irqs(x86_vector_domain, 1, NUMA_NO_NODE, &alloc_info);
++		irq_domain_activate_irq(irq_get_irq_data(irqs[i]), false);
++		if (irqd_cfg(irq_get_irq_data(irqs[i]))->vector == vector) {
++			target_idx = i;
++			break;
++		}
++	}
++
++	for (size_t i = 0; i < target_idx; i++) {
++		irq_domain_deactivate_irq(irq_get_irq_data(irqs[i]));
++		irq_domain_free_irqs(irqs[i], 1);
++	}
++
++	if (target_idx < 256) {
++		__irq_set_handler(irqs[target_idx], handle_level_irq, 0, "level");
++		return irqs[target_idx];
++	}
++
++	return -1;
++}
++
++static struct tty_driver *titania_device(struct console *c, int *index)
++{
++	*index = 0;
++	return the_driver;
++}
++
++static struct console titania_console = {
++	.name = "ttyTitania",
++	.device = titania_device,
++	.write = titania_early_write, //this sucks and can lose characters, but is better than nothing
++};
++
++static int __init titania_console_init(void)
++{
++	if (boot_params.hdr.hardware_subarch == X86_SUBARCH_PS5) {
++		mapping = ioremap(0xc1010100, 16);
++		writel(0x2019, mapping+8);
++
++		int irq = acquire_x86_vector_irq(196);
++		int err = request_threaded_irq(irq, atomic_handler, threaded_handler, 0, "titania uart irq", NULL);
++		if (err) {
++			irq_domain_deactivate_irq(irq_get_irq_data(irq));
++			irq_domain_free_irqs(irq, 1);
++			return err;
++		}
++
++		/* adapted from tty0tty */
++		struct tty_driver *drv = tty_alloc_driver(1, 0);
++		drv->owner = THIS_MODULE;
++		drv->driver_name = "titania_uart";
++		drv->name = "ttyTitania";
++		drv->type = TTY_DRIVER_TYPE_SERIAL;
++		drv->minor_start = 0;
++		drv->subtype = SERIAL_TYPE_NORMAL;
++		drv->flags = TTY_DRIVER_RESET_TERMIOS | TTY_DRIVER_REAL_RAW;
++		drv->init_termios = tty_std_termios;
++		tty_set_operations(drv, &titania_tty_ops);
++		the_driver = drv;
++
++		struct tty_port *port = kmalloc(sizeof(*port), GFP_KERNEL);
++		tty_port_init(port);
++		tty_port_link_device(port, drv, 0);
++		port->ops = &titania_port_ops;
++		the_tty = port;
++
++		err = tty_register_driver(drv);
++		if (err)
++			return err;
++
++		titania_console.data = mapping;
++		register_console(&titania_console);
++		return 0;
++	}
++
++	return 0;
++}
++
++//this has to happen before SMP is up, otherwise Linux will reclaim the interrupt for an IPI
++early_initcall(titania_console_init);
+-- 
+2.50.1
+

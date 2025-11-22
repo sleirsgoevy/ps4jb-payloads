@@ -1,0 +1,27 @@
+From 85ffbc1684ba355f68183c5a171281ff7e6a31a3 Mon Sep 17 00:00:00 2001
+From: Sonya Sireneva <sleirsgoevy@gmail.com>
+Date: Thu, 26 Jun 2025 16:34:15 +0300
+Subject: [PATCH 7/7] Disable PCI Extended Tags for PS5's PCI root hub
+
+This seems to be breaking DMA.
+---
+ drivers/pci/quirks.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/pci/quirks.c b/drivers/pci/quirks.c
+index 82b21e34c..6aff4df9e 100644
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -5557,6 +5557,9 @@ static void quirk_no_ext_tags(struct pci_dev *pdev)
+ 	pci_walk_bus(bridge->bus, pci_configure_extended_tags, NULL);
+ }
+ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_3WARE, 0x1004, quirk_no_ext_tags);
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_AMD, 0x13df, quirk_no_ext_tags);
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_AMD, 0x13e2, quirk_no_ext_tags);
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_AMD, 0x13e5, quirk_no_ext_tags);
+ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_SERVERWORKS, 0x0132, quirk_no_ext_tags);
+ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_SERVERWORKS, 0x0140, quirk_no_ext_tags);
+ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_SERVERWORKS, 0x0141, quirk_no_ext_tags);
+-- 
+2.50.1
+

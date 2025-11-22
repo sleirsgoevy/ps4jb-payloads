@@ -1,0 +1,37 @@
+From 46a11b995f7f100fa2689c12b1aa002010b4a8d0 Mon Sep 17 00:00:00 2001
+From: Sonya Sireneva <sleirsgoevy@gmail.com>
+Date: Thu, 26 Jun 2025 16:33:29 +0300
+Subject: [PATCH 6/7] Do not call pcie_retrain_link on PS5
+
+For some reason, it breaks UART
+---
+ drivers/pci/pci.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 869d204a7..0ba8fbc1a 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -31,6 +31,7 @@
+ #include <linux/aer.h>
+ #include <linux/bitfield.h>
+ #include "pci.h"
++#include <asm/setup.h>
+ 
+ DEFINE_MUTEX(pci_slot_mutex);
+ 
+@@ -4710,6 +4711,11 @@ int pcie_retrain_link(struct pci_dev *pdev, bool use_lt)
+ {
+ 	int rc;
+ 
++#ifdef CONFIG_X86
++	if (unlikely(boot_params.hdr.hardware_subarch == X86_SUBARCH_PS5)) {
++		return -EINVAL;
++	}
++#endif
+ 	/*
+ 	 * Ensure the updated LNKCTL parameters are used during link
+ 	 * training by checking that there is no ongoing link training that
+-- 
+2.50.1
+

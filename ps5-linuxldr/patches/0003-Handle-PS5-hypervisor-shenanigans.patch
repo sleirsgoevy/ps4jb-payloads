@@ -1,0 +1,242 @@
+From 3bd07f26080dd0223b658be39648564bbc0d79f0 Mon Sep 17 00:00:00 2001
+From: Sonya Sireneva <sleirsgoevy@gmail.com>
+Date: Thu, 26 Jun 2025 16:26:59 +0300
+Subject: [PATCH 3/7] Handle PS5 hypervisor shenanigans
+
+The PS5 hypervisor does not allow disabling SMEP/SMAP, and severely
+limits the available MSRs and I/O space, injecting #SX on violations.
+Instead of fixing up every place in the kernel that tries to access the
+forbidden resouces, capture #SX and reinject the appropriate exception
+that the kernel knows how to handle.
+---
+ arch/x86/boot/compressed/head_64.S   |  2 +-
+ arch/x86/include/asm/idtentry.h      |  2 ++
+ arch/x86/include/asm/pgtable_types.h |  4 +--
+ arch/x86/kernel/cpu/bugs.c           | 29 ++++++++--------
+ arch/x86/kernel/head_64.S            |  2 +-
+ arch/x86/kernel/idt.c                |  2 ++
+ arch/x86/kernel/traps.c              | 11 +++++++
+ arch/x86/mm/extable.c                | 49 ++++++++++++++++++++++++++++
+ 8 files changed, 84 insertions(+), 17 deletions(-)
+
+diff --git a/arch/x86/boot/compressed/head_64.S b/arch/x86/boot/compressed/head_64.S
+index 1dcb794c5..e0741686c 100644
+--- a/arch/x86/boot/compressed/head_64.S
++++ b/arch/x86/boot/compressed/head_64.S
+@@ -400,7 +400,7 @@ SYM_CODE_START(startup_64)
+ 
+ 	/* Preserve only the CR4 bits that must be preserved, and clear the rest */
+ 	movq	%cr4, %rax
+-	andl	$(X86_CR4_PAE | X86_CR4_MCE | X86_CR4_LA57), %eax
++	andl	$(X86_CR4_PAE | X86_CR4_MCE | X86_CR4_LA57 | X86_CR4_SMAP | X86_CR4_SMEP | X86_CR4_UMIP), %eax
+ 	movq	%rax, %cr4
+ 
+ 	/*
+diff --git a/arch/x86/include/asm/idtentry.h b/arch/x86/include/asm/idtentry.h
+index ad5c68f05..89a7fd9eb 100644
+--- a/arch/x86/include/asm/idtentry.h
++++ b/arch/x86/include/asm/idtentry.h
+@@ -680,6 +680,8 @@ DECLARE_IDTENTRY_ERRORCODE(X86_TRAP_CP,	exc_control_protection);
+ DECLARE_IDTENTRY_VC(X86_TRAP_VC,	exc_vmm_communication);
+ #endif
+ 
++DECLARE_IDTENTRY_ERRORCODE(X86_TRAP_SX,	exc_security_exception);
++
+ #ifdef CONFIG_XEN_PV
+ DECLARE_IDTENTRY_XENCB(X86_TRAP_OTHER,	exc_xen_hypervisor_callback);
+ DECLARE_IDTENTRY_RAW(X86_TRAP_OTHER,	exc_xen_unknown_trap);
+diff --git a/arch/x86/include/asm/pgtable_types.h b/arch/x86/include/asm/pgtable_types.h
+index 4b804531b..cb5b7626c 100644
+--- a/arch/x86/include/asm/pgtable_types.h
++++ b/arch/x86/include/asm/pgtable_types.h
+@@ -21,8 +21,8 @@
+ #define _PAGE_BIT_SOFTW2	10	/* " */
+ #define _PAGE_BIT_SOFTW3	11	/* " */
+ #define _PAGE_BIT_PAT_LARGE	12	/* On 2MB or 1GB pages */
+-#define _PAGE_BIT_SOFTW4	57	/* available for programmer */
+-#define _PAGE_BIT_SOFTW5	58	/* available for programmer */
++#define _PAGE_BIT_SOFTW4	56	/* available for programmer */
++#define _PAGE_BIT_SOFTW5	57	/* available for programmer */
+ #define _PAGE_BIT_PKEY_BIT0	59	/* Protection Keys, bit 1/4 */
+ #define _PAGE_BIT_PKEY_BIT1	60	/* Protection Keys, bit 2/4 */
+ #define _PAGE_BIT_PKEY_BIT2	61	/* Protection Keys, bit 3/4 */
+diff --git a/arch/x86/kernel/cpu/bugs.c b/arch/x86/kernel/cpu/bugs.c
+index a5d0998d7..f02fca97e 100644
+--- a/arch/x86/kernel/cpu/bugs.c
++++ b/arch/x86/kernel/cpu/bugs.c
+@@ -31,6 +31,7 @@
+ #include <asm/hypervisor.h>
+ #include <asm/tlbflush.h>
+ #include <asm/cpu.h>
++#include <asm/setup.h>
+ 
+ #include "cpu.h"
+ 
+@@ -1363,7 +1364,7 @@ spectre_v2_user_select_mitigation(void)
+ 	}
+ 
+ 	/* Initialize Indirect Branch Prediction Barrier */
+-	if (boot_cpu_has(X86_FEATURE_IBPB)) {
++	if (boot_cpu_has(X86_FEATURE_IBPB) && boot_params.hdr.hardware_subarch != X86_SUBARCH_PS5) {
+ 		setup_force_cpu_cap(X86_FEATURE_USE_IBPB);
+ 
+ 		spectre_v2_user_ibpb = mode;
+@@ -1870,19 +1871,21 @@ static void __init spectre_v2_select_mitigation(void)
+ 	 * the CPU supports Enhanced IBRS, kernel might un-intentionally not
+ 	 * enable IBRS around firmware calls.
+ 	 */
+-	if (boot_cpu_has_bug(X86_BUG_RETBLEED) &&
+-	    boot_cpu_has(X86_FEATURE_IBPB) &&
+-	    (boot_cpu_data.x86_vendor == X86_VENDOR_AMD ||
+-	     boot_cpu_data.x86_vendor == X86_VENDOR_HYGON)) {
+-
+-		if (retbleed_cmd != RETBLEED_CMD_IBPB) {
+-			setup_force_cpu_cap(X86_FEATURE_USE_IBPB_FW);
+-			pr_info("Enabling Speculation Barrier for firmware calls\n");
++	if (boot_params.hdr.hardware_subarch != X86_SUBARCH_PS5) {
++		if (boot_cpu_has_bug(X86_BUG_RETBLEED) &&
++		    boot_cpu_has(X86_FEATURE_IBPB) &&
++		    (boot_cpu_data.x86_vendor == X86_VENDOR_AMD ||
++		     boot_cpu_data.x86_vendor == X86_VENDOR_HYGON)) {
++	
++			if (retbleed_cmd != RETBLEED_CMD_IBPB) {
++				setup_force_cpu_cap(X86_FEATURE_USE_IBPB_FW);
++				pr_info("Enabling Speculation Barrier for firmware calls\n");
++			}
++	
++		} else if (boot_cpu_has(X86_FEATURE_IBRS) && !spectre_v2_in_ibrs_mode(mode)) {
++			setup_force_cpu_cap(X86_FEATURE_USE_IBRS_FW);
++			pr_info("Enabling Restricted Speculation for firmware calls\n");
+ 		}
+-
+-	} else if (boot_cpu_has(X86_FEATURE_IBRS) && !spectre_v2_in_ibrs_mode(mode)) {
+-		setup_force_cpu_cap(X86_FEATURE_USE_IBRS_FW);
+-		pr_info("Enabling Restricted Speculation for firmware calls\n");
+ 	}
+ 
+ 	/* Set up IBPB and STIBP depending on the general spectre V2 command */
+diff --git a/arch/x86/kernel/head_64.S b/arch/x86/kernel/head_64.S
+index 31345e0ba..7da871c8d 100644
+--- a/arch/x86/kernel/head_64.S
++++ b/arch/x86/kernel/head_64.S
+@@ -205,7 +205,7 @@ SYM_INNER_LABEL(common_startup_64, SYM_L_LOCAL)
+ 	 *  entries before the execution; if CR4.PGE is changing from 1 to 0,
+ 	 *  there will be no global TLB entries after the execution."
+ 	 */
+-	movl	$(X86_CR4_PAE | X86_CR4_LA57), %edx
++	movl	$(X86_CR4_PAE | X86_CR4_LA57 | X86_CR4_SMEP | X86_CR4_SMAP | X86_CR4_UMIP), %edx
+ #ifdef CONFIG_X86_MCE
+ 	/*
+ 	 * Preserve CR4.MCE if the kernel will enable #MC support.
+diff --git a/arch/x86/kernel/idt.c b/arch/x86/kernel/idt.c
+index f445bec51..673aaf0b8 100644
+--- a/arch/x86/kernel/idt.c
++++ b/arch/x86/kernel/idt.c
+@@ -116,6 +116,8 @@ static const __initconst struct idt_data def_idts[] = {
+ 	ISTG(X86_TRAP_VC,		asm_exc_vmm_communication, IST_INDEX_VC),
+ #endif
+ 
++	INTG(X86_TRAP_SX,		asm_exc_security_exception),
++
+ 	SYSG(X86_TRAP_OF,		asm_exc_overflow),
+ };
+ 
+diff --git a/arch/x86/kernel/traps.c b/arch/x86/kernel/traps.c
+index 2dbadf347..41a7a6eb4 100644
+--- a/arch/x86/kernel/traps.c
++++ b/arch/x86/kernel/traps.c
+@@ -68,6 +68,7 @@
+ #include <asm/vdso.h>
+ #include <asm/tdx.h>
+ #include <asm/cfi.h>
++#include <asm/setup.h>
+ 
+ #ifdef CONFIG_X86_64
+ #include <asm/x86_init.h>
+@@ -1438,6 +1439,16 @@ DEFINE_IDTENTRY(exc_virtualization_exception)
+ 
+ #endif
+ 
++
++DEFINE_IDTENTRY_ERRORCODE(exc_security_exception)
++{
++	if (fixup_exception(regs, X86_TRAP_SX, error_code, 0)) {
++		return;
++	}
++
++	panic("#SX received, error code = %d, rip = %pS", (int)error_code, (void*)regs->ip);
++}
++
+ #ifdef CONFIG_X86_32
+ DEFINE_IDTENTRY_SW(iret_error)
+ {
+diff --git a/arch/x86/mm/extable.c b/arch/x86/mm/extable.c
+index 51986e8a9..4106177c9 100644
+--- a/arch/x86/mm/extable.c
++++ b/arch/x86/mm/extable.c
+@@ -12,6 +12,7 @@
+ #include <asm/kdebug.h>
+ #include <asm/insn-eval.h>
+ #include <asm/sgx.h>
++#include <asm/setup.h>
+ 
+ static inline unsigned long *pt_regs_nr(struct pt_regs *regs, int nr)
+ {
+@@ -317,6 +318,54 @@ int fixup_exception(struct pt_regs *regs, int trapnr, unsigned long error_code,
+ 	}
+ #endif
+ 
++	if (unlikely(boot_params.hdr.hardware_subarch == X86_SUBARCH_PS5) && trapnr == X86_TRAP_SX) {
++		switch ((int32_t)error_code) {
++		case -7:
++		case -11: //XXX: what's the difference?
++		{
++			//this might be an MSR trapped by the hypervisor
++			//or this could be an I/O operation trapped by the same hypervisor
++			//in either case, the saved RIP is AFTER the instruction
++			uint8_t* code = (uint8_t*)regs->ip;
++			if (code[-2] == 0x0f && (code[-1] == 0x30 || code[-1] == 0x32)) { //rdmsr or wrmsr
++				//inject a fake #GP
++				trapnr = X86_TRAP_GP;
++				regs->ip -= 2;
++				regs->orig_ax = error_code = 0;
++				break;
++			} else { //assuming this is an I/O instruction
++				int possible_1byte = (code[-1] >= 0xec && code[-1] <= 0xef);
++				int possible_2byte = (code[-2] >= 0xe4 && code[-2] <= 0xe7);
++				if(!(possible_1byte ^ possible_2byte))
++					break; //unknown instruction, no idea how to handle. let the kernel just print a stack trace
++				if (possible_1byte)
++					code--;
++				else
++					code -= 2;
++				//don't even try to handle the 0x66 prefix. gcc always treats half-register writes as full-width anyway
++				switch (code[0]) {
++				//out instructions: simply discard
++				case 0xe6:
++				case 0xe7:
++				case 0xee:
++				case 0xef:
++					return 1;
++				//in instructions: write 0 to rax to pretend that *something* has been read
++				case 0xe4:
++				case 0xe5:
++				case 0xec:
++				case 0xed:
++					regs->ax = 0;
++					return 1;
++				//everything else: we have no idea what that is, leave the exception as is
++                default:
++				}
++			}
++			break;
++		}
++		}
++	}
++
+ 	e = search_exception_tables(regs->ip);
+ 	if (!e)
+ 		return 0;
+-- 
+2.50.1
+

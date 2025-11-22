@@ -1,0 +1,39 @@
+From d3d01a444acf58f6d5c10e840b0c0d9b834f846b Mon Sep 17 00:00:00 2001
+From: Sonya Sireneva <sleirsgoevy@gmail.com>
+Date: Thu, 26 Jun 2025 16:25:44 +0300
+Subject: [PATCH 2/7] Fix EXCEPTION_ERRCODE_MASK
+
+It currently claims that #SX does not have an error code. It does.
+---
+ arch/x86/include/asm/segment.h | 2 +-
+ arch/x86/include/asm/trapnr.h  | 1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/include/asm/segment.h b/arch/x86/include/asm/segment.h
+index 9d6411c65..937861aee 100644
+--- a/arch/x86/include/asm/segment.h
++++ b/arch/x86/include/asm/segment.h
+@@ -223,7 +223,7 @@
+ #define NUM_EXCEPTION_VECTORS		32
+ 
+ /* Bitmask of exception vectors which push an error code on the stack: */
+-#define EXCEPTION_ERRCODE_MASK		0x20027d00
++#define EXCEPTION_ERRCODE_MASK		0x60227d00
+ 
+ #define GDT_SIZE			(GDT_ENTRIES*8)
+ #define GDT_ENTRY_TLS_ENTRIES		3
+diff --git a/arch/x86/include/asm/trapnr.h b/arch/x86/include/asm/trapnr.h
+index 8d1154cdf..6fa1d1ba3 100644
+--- a/arch/x86/include/asm/trapnr.h
++++ b/arch/x86/include/asm/trapnr.h
+@@ -39,6 +39,7 @@
+ #define X86_TRAP_VE		20	/* Virtualization Exception */
+ #define X86_TRAP_CP		21	/* Control Protection Exception */
+ #define X86_TRAP_VC		29	/* VMM Communication Exception */
++#define X86_TRAP_SX		30	/* Security Exception (SVM) */
+ #define X86_TRAP_IRET		32	/* IRET Exception */
+ 
+ #endif
+-- 
+2.50.1
+
