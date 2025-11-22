@@ -520,6 +520,20 @@ void r0gdb_write_cr0(uint64_t cr0)
     run_in_kernel(&regs);
 }
 
+uint64_t r0gdb_vmmcall(uint64_t rax, uint64_t rbx, uint64_t rcx, uint64_t rdx)
+{
+    struct regs regs = {};
+    regs.rip = offsets.vmmcall_pop_rbp_ret;
+    regs.rsp = kstack;
+    regs.eflags = 0x102;
+    regs.rax = rax;
+    regs.rbx = rbx;
+    regs.rcx = rcx;
+    regs.rdx = rdx;
+    run_in_kernel(&regs);
+    return regs.rax;
+}
+
 uint64_t trace_frame_size = 168;
 uint64_t trace_base;
 uint64_t trace_start;

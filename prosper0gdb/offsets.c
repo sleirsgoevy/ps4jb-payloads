@@ -92,6 +92,7 @@ DEF(s_shutdown_final, 0)
 DEF(eventhandler_register, 0)
 DEF(strlen_trap, 0)
 DEF(lapic_map, 0)
+DEF(vmmcall_pop_rbp_ret, 0)
 #include "offset_list.txt"
 END_FW()
 
@@ -177,6 +178,7 @@ DEF(s_shutdown_final, 0)
 DEF(eventhandler_register, 0)
 DEF(strlen_trap, 0)
 DEF(lapic_map, 0)
+DEF(vmmcall_pop_rbp_ret, 0)
 #include "offset_list.txt"
 END_FW()
 
@@ -262,6 +264,7 @@ DEF(s_shutdown_final, 0)
 DEF(eventhandler_register, 0)
 DEF(strlen_trap, 0)
 DEF(lapic_map, 0)
+DEF(vmmcall_pop_rbp_ret, 0)
 #include "offset_list.txt"
 END_FW()
 
@@ -347,6 +350,7 @@ DEF(s_shutdown_final, 0)
 DEF(eventhandler_register, 0)
 DEF(strlen_trap, 0)
 DEF(lapic_map, 0)
+DEF(vmmcall_pop_rbp_ret, 0)
 #include "offset_list.txt"
 END_FW()
 
@@ -432,6 +436,7 @@ DEF(s_shutdown_final, 0)
 DEF(eventhandler_register, 0)
 DEF(strlen_trap, 0)
 DEF(lapic_map, 0)
+DEF(vmmcall_pop_rbp_ret, 0)
 #include "offset_list.txt"
 END_FW()
 
@@ -517,6 +522,7 @@ DEF(s_shutdown_final, 0)
 DEF(eventhandler_register, 0)
 DEF(strlen_trap, 0)
 DEF(lapic_map, 0)
+DEF(vmmcall_pop_rbp_ret, 0)
 #include "offset_list.txt"
 END_FW()
 
@@ -608,6 +614,7 @@ DEF(s_shutdown_final, 0x322db7)
 DEF(eventhandler_register, -0x525820)
 DEF(strlen_trap, -0x44a918)
 DEF(lapic_map, 0x2846fa0)
+DEF(vmmcall_pop_rbp_ret, -0x9c6e7)
 #include "offset_list.txt"
 END_FW()
 
@@ -699,6 +706,7 @@ DEF(s_shutdown_final, 0)
 DEF(eventhandler_register, 0)
 DEF(strlen_trap, 0)
 DEF(lapic_map, 0)
+DEF(vmmcall_pop_rbp_ret, 0)
 #include "offset_list.txt"
 END_FW()
 
@@ -790,6 +798,7 @@ DEF(s_shutdown_final, 0x322c1f)
 DEF(eventhandler_register, -0x525370)
 DEF(strlen_trap, -0x44a448)
 DEF(lapic_map, 0)
+DEF(vmmcall_pop_rbp_ret, 0)
 #include "offset_list.txt"
 END_FW()
 

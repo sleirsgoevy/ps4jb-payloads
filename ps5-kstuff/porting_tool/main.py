@@ -701,6 +701,47 @@ def mov_rdi_cr2():
     assert gdb.ieval('$pc == '+ostr(mov_rdi_cr2+3)+' && (unsigned long long)$rbx == 0xffffffffffff38ff')
     return mov_rdi_cr2 - kdata_base
 
+@derive_symbol
+@retry_on_error
+def vmmcall_pop_rbp_ret():
+    kernel, kdata_base = get_kernel()
+    idt30 = kernel[get_symbol('idt')+30*16:get_symbol('idt')+31*16]
+    security_handler = int.from_bytes(idt30[:2]+idt30[6:12], 'little') - kdata_base
+    use_r0gdb_raw(False)
+    real_thread = gdb.ieval('get_thread()')
+    gdb.execute('p r0gdb()')
+    rsp = fake_thread = gdb.ieval('$rsp = ((uint64_t)$rsp & -4096) - 8192')
+    kdata_base = gdb.ieval('({void*[512]}%d = {0, %d}, {char[4096]}%d = {%s}, kdata_base)'%(fake_thread, fake_thread + 4096, fake_thread + 4096, ', '.join(['1']*4096)))
+    pc = gdb.ieval('$pc = '+ostr(kdata_base + security_handler))
+    while True:
+        gdb.execute('stepi')
+        new_pc = gdb.ieval('$pc')
+        new_rsp = gdb.ieval('$rsp')
+        if new_pc not in range(pc, pc+16) and new_rsp != rsp: break
+        pc = new_pc
+        rsp = new_rsp
+    assert new_rsp == rsp - 8
+    rsp = new_rsp
+    pc = gdb.ieval('$pc = 3 + {void*}'+ostr(rsp))
+    last_raxes = (None, None, None)
+    while True:
+        gdb.execute('stepi')
+        last_pc = pc
+        last_rsp = rsp
+        pc = gdb.ieval('$pc')
+        rsp = gdb.ieval('$rsp')
+        rax = gdb.ieval('$rax')
+        if pc not in range(last_pc, last_pc+16) and rsp == last_rsp - 8:
+            rdi = gdb.ieval('$rdi')
+            if (rdi - real_thread) % 2**64 == 0:
+                gdb.ieval('$rdi = '+ostr(fake_thread))
+                real_proc = None
+        print(hex(pc), hex(rsp), hex(rax))
+        last_raxes = last_raxes[1:] + (rax,)
+        if last_raxes[1:] == (4, 0) and last_raxes[0] != 4:
+            assert pc == last_pc + 4 and rsp == last_rsp + 8
+            return last_pc - kdata_base
+
 @derive_symbols('syscall_before', 'syscall_after')
 @retry_on_error
 def syscall_before():
