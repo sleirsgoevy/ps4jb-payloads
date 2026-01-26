@@ -232,16 +232,9 @@ void* malloc(size_t sz)
     return mmap(0, sz, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
 }
 
-uint64_t get_dmap_base(void)
-{
-    uint64_t ptrs[2];
-    copyout(ptrs, offsets.kernel_pmap_store+32, sizeof(ptrs));
-    return ptrs[0] - ptrs[1];
-}
-
 uint64_t virt2phys(uintptr_t addr)
 {
-    uint64_t dmap = get_dmap_base();
+    uint64_t dmap = r0gdb_get_dmap_base();
     uint64_t pml = r0gdb_read_cr3();
     for(int i = 39; i >= 12; i -= 9)
     {
@@ -263,7 +256,7 @@ uint64_t virt2phys(uintptr_t addr)
 
 uint64_t find_empty_pml4_index(int idx)
 {
-    uint64_t dmap = get_dmap_base();
+    uint64_t dmap = r0gdb_get_dmap_base();
     uint64_t cr3 = r0gdb_read_cr3();
     uint64_t pml4[512];
     copyout(pml4, dmap+cr3, 4096);
@@ -275,7 +268,7 @@ uint64_t find_empty_pml4_index(int idx)
 void build_uelf_cr3(uint64_t uelf_cr3, void* uelf_base[2], uint64_t uelf_virt_base, uint64_t dmap_virt_base)
 {
     static char zeros[4096];
-    uint64_t dmap = get_dmap_base();
+    uint64_t dmap = r0gdb_get_dmap_base();
     uint64_t cr3 = r0gdb_read_cr3();
     uint64_t user_start = (uint64_t)uelf_base[0];
     uint64_t user_end = (uint64_t)uelf_base[1];

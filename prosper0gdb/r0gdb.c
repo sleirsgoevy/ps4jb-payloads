@@ -1652,3 +1652,10 @@ uintptr_t r0gdb_leak_fd(int which)
     close(which);
     return file_value;
 }
+
+uint64_t r0gdb_get_dmap_base(void)
+{
+    uint64_t ptrs[2];
+    copyout(ptrs, offsets.kernel_pmap_store+32, sizeof(ptrs));
+    return ptrs[0] - ptrs[1];
+}

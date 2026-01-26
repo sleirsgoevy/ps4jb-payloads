@@ -27,16 +27,9 @@ static int strcmp(const char* a, const char* b)
     return *a - *b;
 }
 
-uint64_t get_dmap_base(void)
-{
-    uint64_t ptrs[2];
-    copyout(ptrs, offsets.kernel_pmap_store+32, sizeof(ptrs));
-    return ptrs[0] - ptrs[1];
-}
-
 uint64_t virt2phys(uintptr_t addr)
 {
-    uint64_t dmap = get_dmap_base();
+    uint64_t dmap = r0gdb_get_dmap_base();
     uint64_t pml = r0gdb_read_cr3();
     for(int i = 39; i >= 12; i -= 9)
     {
@@ -73,7 +66,7 @@ static uint64_t alloc_page(void)
 
 static void map_page(uint64_t cr3, uint64_t virt)
 {
-    uint64_t dmap = get_dmap_base();
+    uint64_t dmap = r0gdb_get_dmap_base();
     static char empty_page[4096];
     uint64_t pml = cr3;
     for(size_t i = 39; i >= 12; i -= 9)
@@ -94,7 +87,7 @@ static void map_page(uint64_t cr3, uint64_t virt)
 
 uint64_t create_cr3(size_t npages)
 {
-    uint64_t dmap = get_dmap_base();
+    uint64_t dmap = r0gdb_get_dmap_base();
     uint64_t cr3 = alloc_page();
     uint64_t dmem1 = alloc_page();
     uint64_t dmem2 = alloc_page();
@@ -269,8 +262,8 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     npages++;
     uint64_t cr3 = create_cr3(npages);
     uint64_t pml3_2;
-    copyout(&pml3_2, get_dmap_base()+cr3+16, 8);
-    copyin(get_dmap_base()+r0gdb_read_cr3()+16, &pml3_2, 8);
+    copyout(&pml3_2, r0gdb_get_dmap_base()+cr3+16, 8);
+    copyin(r0gdb_get_dmap_base()+r0gdb_read_cr3()+16, &pml3_2, 8);
     char* mapping = (char*)(2ull << 39);
     enum { VIRTUAL_BASE = 0xffff810000000000 };
     uint64_t* dynamic_start = 0;
@@ -413,7 +406,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     copyout(idt_entry, offsets.idt+16, 16);
     idt_entry[4] = 7;
     copyin(offsets.idt+13*16, idt_entry, 16);
-    copyin(get_dmap_base()+0xc0115110, "\x00\x02\x00\x00", 4);
+    copyin(r0gdb_get_dmap_base()+0xc0115110, "\x00\x02\x00\x00", 4);
     copyin(kdata_base+0x13522a8, "", 1);
     //asm volatile("wrmsr"); //uncomment to jump to fakexen directly without cleanly rebooting
     kill(1, SIGUSR1);

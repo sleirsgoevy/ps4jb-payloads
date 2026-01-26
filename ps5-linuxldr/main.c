@@ -15,16 +15,9 @@
 #include "../gdb_stub/dbg.h"
 #include "memmap.h"
 
-uint64_t get_dmap_base(void)
-{
-    uint64_t ptrs[2];
-    copyout(ptrs, offsets.kernel_pmap_store+32, sizeof(ptrs));
-    return ptrs[0] - ptrs[1];
-}
-
 uint64_t virt2phys(uintptr_t addr)
 {
-    uint64_t dmap = get_dmap_base();
+    uint64_t dmap = r0gdb_get_dmap_base();
     uint64_t pml = r0gdb_read_cr3();
     for(int i = 39; i >= 12; i -= 9)
     {
@@ -63,7 +56,7 @@ static uint64_t alloc_page(void)
 
 static void map_page(uint64_t cr3, uint64_t virt)
 {
-    uint64_t dmap = get_dmap_base();
+    uint64_t dmap = r0gdb_get_dmap_base();
     static char empty_page[4096];
     uint64_t pml = cr3;
     for(size_t i = 39; i >= 12; i -= 9)
@@ -85,7 +78,7 @@ static void map_page(uint64_t cr3, uint64_t virt)
 static int blacklist_page(struct memmap* mm, uint64_t cr3, uint64_t virt)
 {
     uint64_t pml = cr3;
-    uint64_t dmap = get_dmap_base();
+    uint64_t dmap = r0gdb_get_dmap_base();
     for(size_t i = 39; i >= 12; i -= 9)
     {
         memmap_add_bad_region(mm, pml, pml+4096);
@@ -279,7 +272,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     addr = (initrd_addr + initrd_size + 4095) & -4096;
     addr += kernel_misalignment;
     *(uint64_t*)pml4_for_linux = virt2phys(pml3_for_linux) | 3;
-    copyout((uint64_t*)(pml4_for_linux+8), get_dmap_base()+cr3+8, 4088);
+    copyout((uint64_t*)(pml4_for_linux+8), r0gdb_get_dmap_base()+cr3+8, 4088);
     uint64_t* pml3t = (uint64_t*)pml3_for_linux;
     for(size_t i = 0; i < 512; i++)
         pml3t[i] = (i << 30) | 131;
@@ -387,7 +380,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     memcpy(idt_entry, &base, 2);
     memcpy(idt_entry+6, (char*)&base + 2, 6);
     copyin(offsets.idt+16, idt_entry, 16);
-    copyin(get_dmap_base()+0xc0115110, "\x00\x02\x00\x00", 4);
+    copyin(r0gdb_get_dmap_base()+0xc0115110, "\x00\x02\x00\x00", 4);
     copyin(kdata_base+0x13522a8, "", 1);
     *(uint64_t*)(pml4_for_linux + 8) &= -5; //clear USER bit, we don't want to trigger SMEP
     DBG("done\n");
